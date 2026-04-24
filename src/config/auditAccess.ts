@@ -14,7 +14,7 @@ export const getAllowedAuditEmails = (): string[] =>
   parseList(process.env.AUDIT_ALLOWED_EMAILS).map((e) => e.toLowerCase());
 
 export const isAuditRoleEligible = (user: {
-  _id: mongoose.Types.ObjectId | string;
+  _id: unknown;
   email: string;
 }): boolean => {
   const ids = getAllowedAuditUserIds();
