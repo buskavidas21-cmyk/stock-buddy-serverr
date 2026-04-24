@@ -5,6 +5,7 @@ import Transaction from '../models/Transaction';
 import mongoose from 'mongoose';
 import { notifyUsers } from '../utils/notificationService';
 import { notifyLowStock } from '../utils/inventoryAlerts';
+import { itemInventoryRef } from '../utils/itemRef';
 
 const parseBody = (body: any) => {
   if (typeof body === 'string') {
@@ -131,7 +132,7 @@ export const addStock = async (req: AuthRequest, res: Response) => {
             <h3 style="margin-top: 0; color: #1f2937;">Item Details</h3>
             <ul style="list-style: none; padding: 0;">
               <li><strong>Item:</strong> ${item.name}</li>
-              <li><strong>SKU:</strong> ${item.sku}</li>
+              <li><strong>Ref:</strong> ${itemInventoryRef(item)}</li>
               <li><strong>Unit:</strong> ${item.unit}</li>
               <li><strong>Threshold:</strong> ${item.threshold} ${item.unit}</li>
             </ul>
@@ -277,7 +278,7 @@ export const transferStock = async (req: AuthRequest, res: Response) => {
       emailHtml: `
         <p>A stock transfer requires your approval.</p>
         <ul>
-          <li>Item: ${item.name} (${item.sku})</li>
+          <li>Item: ${item.name} (${itemInventoryRef(item)})</li>
           <li>Quantity: ${quantity} ${item.unit}</li>
           <li>From: ${fromLocationName}</li>
           <li>To: ${toLocationName}</li>
@@ -314,6 +315,8 @@ export const getStockByLocation = async (req: AuthRequest, res: Response) => {
           id: item.id,
           name: item.name,
           sku: item.sku,
+          modelNumber: item.modelNumber,
+          serialNumber: item.serialNumber,
           unit: item.unit,
           threshold: item.threshold
         },

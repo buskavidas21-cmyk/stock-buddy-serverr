@@ -2,6 +2,7 @@ import { Response } from 'express';
 import { AuthRequest } from '../middleware/auth';
 import User from '../models/User';
 import bcrypt from 'bcryptjs';
+import { isAuditRoleEligible } from '../config/auditAccess';
 
 export const getUsers = async (req: AuthRequest, res: Response) => {
   try {
@@ -24,12 +25,20 @@ export const createUser = async (req: AuthRequest, res: Response) => {
       return res.status(400).json({ error: 'User already exists' });
     }
 
+    const normalizedRole = typeof role === 'string' ? role.trim().toLowerCase() : 'staff';
+    if (!['admin', 'staff', 'audits'].includes(normalizedRole)) {
+      return res.status(400).json({ error: 'Invalid role' });
+    }
+    if (normalizedRole === 'audits' && !isAuditRoleEligible({ _id: email, email })) {
+      return res.status(400).json({ error: 'This account is not eligible for audits role' });
+    }
+
     const hashedPassword = await bcrypt.hash(password, 12);
     const user = new User({
       email,
       password: hashedPassword,
       name,
-      role: role || 'staff'
+      role: normalizedRole
     });
 
     await user.save();
@@ -51,10 +60,31 @@ export const createUser = async (req: AuthRequest, res: Response) => {
 export const updateUser = async (req: AuthRequest, res: Response) => {
   try {
     const { name, role, isActive } = req.body;
-    
+    const update: Record<string, unknown> = {};
+    if (name !== undefined) {
+      update.name = name;
+    }
+    if (isActive !== undefined) {
+      update.isActive = isActive;
+    }
+    if (role !== undefined) {
+      const normalizedRole = String(role).trim().toLowerCase();
+      if (!['admin', 'staff', 'audits'].includes(normalizedRole)) {
+        return res.status(400).json({ error: 'Invalid role' });
+      }
+      const existing = await User.findById(req.params.id).select('_id email');
+      if (!existing) {
+        return res.status(404).json({ error: 'User not found' });
+      }
+      if (normalizedRole === 'audits' && !isAuditRoleEligible({ _id: existing._id, email: existing.email })) {
+        return res.status(400).json({ error: 'This account is not eligible for audits role' });
+      }
+      update.role = normalizedRole;
+    }
+
     const user = await User.findByIdAndUpdate(
       req.params.id,
-      { name, role, isActive },
+      update,
       { new: true }
     ).select('-password -resetToken -resetTokenExpiry');
 

@@ -6,6 +6,30 @@ import Transaction from '../models/Transaction';
 import mongoose from 'mongoose';
 import { notifyUsers } from '../utils/notificationService';
 import { notifyLowStock } from '../utils/inventoryAlerts';
+import { itemInventoryRef } from '../utils/itemRef';
+
+const MAX_REPAIR_RETURN_CHECKLIST = 50;
+
+const normalizeRepairReturnChecklist = (raw: unknown) => {
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+
+  const items: { label: string; completed: boolean }[] = [];
+
+  for (const row of raw.slice(0, MAX_REPAIR_RETURN_CHECKLIST)) {
+    const label = String((row as any)?.label ?? (row as any)?.text ?? '').trim();
+    if (!label) {
+      continue;
+    }
+    items.push({
+      label: label.slice(0, 500),
+      completed: Boolean((row as any)?.completed)
+    });
+  }
+
+  return items;
+};
 
 export const sendForRepair = async (req: AuthRequest, res: Response) => {
   try {
@@ -111,7 +135,7 @@ export const sendForRepair = async (req: AuthRequest, res: Response) => {
             <h3 style="margin-top: 0; color: #1f2937;">Item Details</h3>
             <ul style="list-style: none; padding: 0;">
               <li><strong>Item:</strong> ${item.name}</li>
-              <li><strong>SKU:</strong> ${item.sku}</li>
+              <li><strong>Ref:</strong> ${itemInventoryRef(item)}</li>
               <li><strong>Unit:</strong> ${item.unit}</li>
               <li><strong>Threshold:</strong> ${item.threshold} ${item.unit}</li>
             </ul>
@@ -163,7 +187,7 @@ export const sendForRepair = async (req: AuthRequest, res: Response) => {
 
 export const returnFromRepair = async (req: AuthRequest, res: Response) => {
   try {
-    const { repairTicketId, locationId, note } = req.body;
+    const { repairTicketId, locationId, note, checklist } = req.body;
 
     const repairTicket = await RepairTicket.findById(repairTicketId);
     if (!repairTicket || repairTicket.status !== 'sent') {
@@ -198,6 +222,8 @@ export const returnFromRepair = async (req: AuthRequest, res: Response) => {
     repairTicket.returnedDate = new Date();
     await repairTicket.save();
 
+    const repairReturnChecklist = normalizeRepairReturnChecklist(checklist);
+
     // Create transaction record
     const transaction = new Transaction({
       type: 'REPAIR_IN',
@@ -205,6 +231,7 @@ export const returnFromRepair = async (req: AuthRequest, res: Response) => {
       toLocationId: locationId,
       quantity: repairTicket.quantity,
       note,
+      repairReturnChecklist: repairReturnChecklist.length ? repairReturnChecklist : undefined,
       createdBy: req.user?._id
     });
 

@@ -1,12 +1,14 @@
 import { Router } from 'express';
 import { getUsers, createUser, updateUser, resetUserPassword } from '../controllers/userController';
 import { authenticateToken, requireAdmin } from '../middleware/auth';
+import { rejectAuditsFromInventoryRoutes } from '../middleware/auditRole';
 
 const router = Router();
 
-router.get('/', authenticateToken, requireAdmin, getUsers);
-router.post('/', authenticateToken, requireAdmin, createUser);
-router.put('/:id', authenticateToken, requireAdmin, updateUser);
-router.post('/:id/reset-password', authenticateToken, requireAdmin, resetUserPassword);
+router.use(authenticateToken, rejectAuditsFromInventoryRoutes, requireAdmin);
+router.get('/', getUsers);
+router.post('/', createUser);
+router.put('/:id', updateUser);
+router.post('/:id/reset-password', resetUserPassword);
 
 export default router;

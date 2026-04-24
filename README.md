@@ -4,18 +4,35 @@ Complete inventory management system backend built with Node.js, Express.js, Mon
 
 ## Features
 
-- **Authentication & Authorization**: JWT-based auth with role-based access (Admin/Staff)
+- **Authentication & Authorization**: JWT-based auth with role-based access (Admin/Staff/Audits)
 - **Email Integration**: Password reset via Gmail SMTP
-- **Item Management**: CRUD operations for inventory items with barcode support
+- **Item Management**: CRUD operations for inventory items with barcode, model/serial, and purchase date support
 - **Stock Management**: Add stock, transfer between locations with approval workflow
-- **Repair Management**: Send items for repair and track returns with vendor details
+- **Repair Management**: Send items for repair and track returns with vendor details and return checklist
 - **Disposal Management**: Request disposals with photo proof and admin approval
 - **Location Management**: Manage multiple warehouse locations
-- **Transaction Logging**: Complete audit trail of all operations
+- **Transaction Logging**: Complete audit trail with filtering, search, pagination, and print-friendly export
 - **Dashboard**: Real-time inventory overview with low stock alerts
 - **User Management**: Admin can manage staff users
 
 ## API Documentation
+
+## What's New (Inventory V2)
+
+- `items` now support optional `modelNumber`, `serialNumber`, and `purchaseDate`.
+- `sku` is now optional for new item creation (legacy SKU values remain supported).
+- `REPAIR_IN` transactions now support `repairReturnChecklist` (array of checklist items).
+- Transactions API supports advanced filtering:
+  - category (`all`, `sent_repair`, `returned_repair`, `transfers`, `disposed`, `add`)
+  - date presets (`day`, `week`, `month`, `year`) via `datePreset` + optional `anchorDate`
+  - `search` across item and transaction text fields
+- New printable transactions view:
+  - `GET /transactions/export/print` (respects current filters)
+- New role: `audits`:
+  - read-only intent for transactions
+  - blocked from inventory/dashboard/location/users/stock/repair/disposal modules
+  - role assignment is restricted by environment allowlist
+
 
 ### Base URL
 ```
@@ -41,7 +58,7 @@ Authorization: Bearer YOUR_JWT_TOKEN
   "email": "user@example.com",
   "password": "password123",
   "name": "John Doe",
-  "role": "admin", // or "staff"
+  "role": "admin", // "admin" | "staff" | "audits"
   "noti": "enabled" // string optional - notification preference
 }
 ```
@@ -229,7 +246,9 @@ Authorization: Bearer YOUR_JWT_TOKEN
 ```json
 {
   "name": "Laptop Dell",
-  "sku": "DELL-001",
+  "model_number": "LAT-15-G6", // optional
+  "serial_number": "SN-ABC-123", // optional
+  "purchase_date": "2026-04-24", // optional
   "barcode": "123456789", // optional
   "unit": "pieces",
   "threshold": 5,
@@ -245,6 +264,9 @@ Authorization: Bearer YOUR_JWT_TOKEN
     "_id": "item_id",
     "name": "Laptop Dell",
     "sku": "DELL-001",
+    "modelNumber": "LAT-15-G6",
+    "serialNumber": "SN-ABC-123",
+    "purchaseDate": "2026-04-24T00:00:00.000Z",
     "barcode": "123456789",
     "unit": "pieces",
     "threshold": 5,
@@ -488,7 +510,11 @@ Set `approved` to `false` to reject a pending transfer.
 {
   "repairTicketId": "repair_ticket_id",
   "locationId": "location_id",
-  "note": "Repaired successfully"
+  "note": "Repaired successfully",
+  "checklist": [
+    { "label": "Power test", "completed": true },
+    { "label": "Visual inspection", "completed": false }
+  ]
 }
 ```
 
@@ -721,14 +747,18 @@ Set `approved` to `false` to reject a pending transfer.
 ## 📋 Transaction History
 
 ### 1. Get Transactions
-**GET** `/transactions?type=ADD&status=approved&page=1&limit=50`
+**GET** `/transactions?category=all&type=ADD&status=approved&datePreset=month&search=laptop&page=1&limit=50`
 **Headers:** `Authorization: Bearer TOKEN`
 
 **Query Parameters:**
 - `type`: ADD, TRANSFER, REPAIR_OUT, REPAIR_IN, DISPOSE
+- `category`: all, sent_repair, returned_repair, transfers, disposed, add
 - `status`: pending, approved, rejected
+- `datePreset`: day, week, month, year
+- `anchorDate`: ISO date (used with `datePreset`)
 - `startDate`: ISO date string
 - `endDate`: ISO date string
+- `search`: free text search
 - `page`: Page number (default: 1)
 - `limit`: Items per page (default: 50)
 
@@ -756,7 +786,27 @@ Set `approved` to `false` to reject a pending transfer.
 }
 ```
 
-### 2. Get Transaction by ID
+### 2. Print Transactions (Filtered View)
+**GET** `/transactions/export/print?category=transfers&datePreset=week&search=main`
+**Headers:** `Authorization: Bearer TOKEN`
+
+Returns a clean HTML table optimized for browser print.
+
+### 3. Update Repair Return Checklist
+**PATCH** `/transactions/:id/repair-checklist`
+**Headers:** `Authorization: Bearer TOKEN`
+
+**Request Body:**
+```json
+{
+  "items": [
+    { "id": "checklist_item_id_1", "completed": true },
+    { "id": "checklist_item_id_2", "completed": false }
+  ]
+}
+```
+
+### 4. Get Transaction by ID
 **GET** `/transactions/:id`
 **Headers:** `Authorization: Bearer TOKEN`
 
@@ -825,6 +875,10 @@ EMAIL_USER=your-gmail@gmail.com
 EMAIL_APP_PASSWORD=your-gmail-app-password
 FCM_SERVER_KEY=your-firebase-server-key
 FRONTEND_URL=http://localhost:3000
+
+# Audits role allowlist (comma-separated)
+AUDIT_ALLOWED_USER_IDS=
+AUDIT_ALLOWED_EMAILS=
 ```
 
 ### 3. Gmail Setup

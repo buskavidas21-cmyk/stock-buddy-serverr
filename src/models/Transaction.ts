@@ -1,5 +1,11 @@
 import mongoose, { Document, Schema } from 'mongoose';
 
+export interface IRepairReturnChecklistItem {
+  _id: mongoose.Types.ObjectId;
+  label: string;
+  completed: boolean;
+}
+
 export interface ITransaction extends Document {
   type: 'ADD' | 'TRANSFER' | 'REPAIR_OUT' | 'REPAIR_IN' | 'DISPOSE';
   itemId: mongoose.Types.ObjectId;
@@ -10,6 +16,8 @@ export interface ITransaction extends Document {
   photo?: string; // Base64 encoded
   vendorName?: string; // For repairs
   serialNumber?: string; // For repairs
+  /** Checklist for return-from-repair flow (REPAIR_IN). */
+  repairReturnChecklist?: IRepairReturnChecklistItem[];
   reason?: 'Broken' | 'Expired' | 'Obsolete'; // For disposals
   status: 'pending' | 'approved' | 'rejected';
   approvedBy?: mongoose.Types.ObjectId;
@@ -18,6 +26,14 @@ export interface ITransaction extends Document {
   createdAt: Date;
   updatedAt: Date;
 }
+
+const RepairReturnChecklistItemSchema = new Schema<IRepairReturnChecklistItem>(
+  {
+    label: { type: String, required: true, maxlength: 500 },
+    completed: { type: Boolean, default: false }
+  },
+  { _id: true }
+);
 
 const TransactionSchema = new Schema<ITransaction>({
   type: { 
@@ -33,6 +49,7 @@ const TransactionSchema = new Schema<ITransaction>({
   photo: { type: String }, // Base64 encoded image
   vendorName: { type: String }, // For repair transactions
   serialNumber: { type: String }, // For repair transactions
+  repairReturnChecklist: { type: [RepairReturnChecklistItemSchema], default: undefined },
   reason: { type: String, enum: ['Broken', 'Expired', 'Obsolete'] }, // For disposal
   status: { type: String, enum: ['pending', 'approved', 'rejected'], default: 'approved' },
   approvedBy: { type: Schema.Types.ObjectId, ref: 'User' },

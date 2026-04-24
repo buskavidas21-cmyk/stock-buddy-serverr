@@ -4,6 +4,24 @@ import jwt from 'jsonwebtoken';
 import User from '../models/User';
 import { AuthRequest } from '../middleware/auth';
 import { sendPasswordResetEmail } from '../utils/emailService';
+import { isAuditRoleEligible } from '../config/auditAccess';
+
+const normalizeRoleForCreate = (role: unknown, user: { _id: unknown; email?: string }) => {
+  const normalized = typeof role === 'string' ? role.trim().toLowerCase() : '';
+  if (!normalized) {
+    return 'staff';
+  }
+  if (normalized === 'audits') {
+    if (!isAuditRoleEligible({ _id: user._id as any, email: user.email || '' })) {
+      throw new Error('This account is not eligible for audits role');
+    }
+    return 'audits';
+  }
+  if (normalized === 'admin' || normalized === 'staff') {
+    return normalized;
+  }
+  throw new Error('Invalid role');
+};
 
 export const register = async (req: Request, res: Response) => {
   try {
@@ -15,11 +33,12 @@ export const register = async (req: Request, res: Response) => {
     }
 
     const hashedPassword = await bcrypt.hash(password, 12);
+    const resolvedRole = normalizeRoleForCreate(role, { _id: email, email });
     const user = new User({
       email,
       password: hashedPassword,
       name,
-      role: role || 'staff',
+      role: resolvedRole,
       ...(noti !== undefined && { noti })
     });
 
@@ -41,7 +60,10 @@ export const register = async (req: Request, res: Response) => {
         role: user.role
       }
     });
-  } catch (error) {
+  } catch (error: any) {
+    if (error?.message === 'Invalid role' || error?.message === 'This account is not eligible for audits role') {
+      return res.status(400).json({ error: error.message });
+    }
     res.status(500).json({ error: 'Registration failed' });
   }
 };

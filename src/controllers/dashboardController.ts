@@ -23,6 +23,9 @@ export const getDashboardData = async (req: AuthRequest, res: Response) => {
       id: item._id,
       name: item.name,
       sku: item.sku,
+      modelNumber: item.modelNumber,
+      serialNumber: item.serialNumber,
+      purchaseDate: item.purchaseDate,
       currentStock: item.locations.reduce((sum, loc) => sum + loc.quantity, 0),
       threshold: item.threshold
     }));
@@ -38,7 +41,7 @@ export const getDashboardData = async (req: AuthRequest, res: Response) => {
 
     // Get recent transactions (last 10)
     const recentTransactions = await Transaction.find()
-      .populate('itemId', 'name sku')
+      .populate('itemId', 'name sku modelNumber serialNumber purchaseDate')
       .populate('createdBy', 'name')
       .populate('fromLocationId', 'name')
       .populate('toLocationId', 'name')

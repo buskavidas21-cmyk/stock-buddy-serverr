@@ -4,6 +4,7 @@ import Item from '../models/Item';
 import Transaction from '../models/Transaction';
 import { notifyUsers } from '../utils/notificationService';
 import { notifyLowStock } from '../utils/inventoryAlerts';
+import { itemInventoryRef } from '../utils/itemRef';
 
 export const requestDisposal = async (req: AuthRequest, res: Response) => {
   // console.log('🗑️ [DISPOSAL] Starting disposal request...');
@@ -180,7 +181,7 @@ export const requestDisposal = async (req: AuthRequest, res: Response) => {
             <h3 style="margin-top: 0; color: #1f2937;">Item Details</h3>
             <ul style="list-style: none; padding: 0;">
               <li><strong>Item:</strong> ${item.name}</li>
-              <li><strong>SKU:</strong> ${item.sku}</li>
+              <li><strong>Ref:</strong> ${itemInventoryRef(item)}</li>
               <li><strong>Unit:</strong> ${item.unit}</li>
               <li><strong>Current Threshold:</strong> ${item.threshold} ${item.unit}</li>
             </ul>
