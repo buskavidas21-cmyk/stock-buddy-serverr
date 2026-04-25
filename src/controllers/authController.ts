@@ -6,13 +6,13 @@ import { AuthRequest } from '../middleware/auth';
 import { sendPasswordResetEmail } from '../utils/emailService';
 import { isAuditRoleEligible } from '../config/auditAccess';
 
-const normalizeRoleForCreate = (role: unknown, user: { _id: unknown; email?: string }) => {
+const normalizeRoleForCreate = (role: unknown, isAuditApproved: boolean) => {
   const normalized = typeof role === 'string' ? role.trim().toLowerCase() : '';
   if (!normalized) {
     return 'staff';
   }
   if (normalized === 'audits') {
-    if (!isAuditRoleEligible({ _id: user._id as any, email: user.email || '' })) {
+    if (!isAuditRoleEligible({ isAuditApproved })) {
       throw new Error('This account is not eligible for audits role');
     }
     return 'audits';
@@ -25,7 +25,7 @@ const normalizeRoleForCreate = (role: unknown, user: { _id: unknown; email?: str
 
 export const register = async (req: Request, res: Response) => {
   try {
-    const { email, password, name, role, noti } = req.body;
+    const { email, password, name, role, noti, isAuditApproved } = req.body;
 
     const existingUser = await User.findOne({ email });
     if (existingUser) {
@@ -33,12 +33,14 @@ export const register = async (req: Request, res: Response) => {
     }
 
     const hashedPassword = await bcrypt.hash(password, 12);
-    const resolvedRole = normalizeRoleForCreate(role, { _id: email, email });
+    const approved = Boolean(isAuditApproved) || (typeof role === 'string' && role.trim().toLowerCase() === 'audits');
+    const resolvedRole = normalizeRoleForCreate(role, approved);
     const user = new User({
       email,
       password: hashedPassword,
       name,
       role: resolvedRole,
+      isAuditApproved: approved,
       ...(noti !== undefined && { noti })
     });
 

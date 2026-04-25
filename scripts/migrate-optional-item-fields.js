@@ -81,7 +81,7 @@ async function main() {
   );
   console.log('Repair return transactions backfilled:', txResult.modifiedCount);
 
-  console.log('Audits role is env-restricted; no bulk user role mutation applied.');
+  console.log('Audits role is admin-controlled; no bulk user role mutation applied.');
   await mongoose.disconnect();
   console.log('Migration completed');
 }

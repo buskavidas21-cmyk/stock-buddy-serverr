@@ -31,7 +31,7 @@ Complete inventory management system backend built with Node.js, Express.js, Mon
 - New role: `audits`:
   - read-only intent for transactions
   - blocked from inventory/dashboard/location/users/stock/repair/disposal modules
-  - role assignment is restricted by environment allowlist
+  - role assignment is admin-managed via User Management using `isAuditApproved`
 
 
 ### Base URL
@@ -58,10 +58,12 @@ Authorization: Bearer YOUR_JWT_TOKEN
   "email": "user@example.com",
   "password": "password123",
   "name": "John Doe",
-  "role": "admin", // "admin" | "staff" | "audits"
+  "role": "staff", // default onboarding role
   "noti": "enabled" // string optional - notification preference
 }
 ```
+
+> For security, assign `audits` role through admin-only `/users` APIs with `isAuditApproved=true`.
 
 **Response (201):**
 ```json
@@ -714,7 +716,8 @@ Set `approved` to `false` to reject a pending transfer.
   "email": "newuser@example.com",
   "password": "password123",
   "name": "New User",
-  "role": "staff"
+  "role": "audits",
+  "isAuditApproved": true
 }
 ```
 
@@ -726,7 +729,8 @@ Set `approved` to `false` to reject a pending transfer.
 ```json
 {
   "name": "Updated Name",
-  "role": "staff",
+  "role": "audits",
+  "isAuditApproved": true,
   "isActive": true
 }
 ```
@@ -875,10 +879,6 @@ EMAIL_USER=your-gmail@gmail.com
 EMAIL_APP_PASSWORD=your-gmail-app-password
 FCM_SERVER_KEY=your-firebase-server-key
 FRONTEND_URL=http://localhost:3000
-
-# Audits role allowlist (comma-separated)
-AUDIT_ALLOWED_USER_IDS=
-AUDIT_ALLOWED_EMAILS=
 ```
 
 ### 3. Gmail Setup

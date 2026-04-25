@@ -18,7 +18,7 @@ export const getUsers = async (req: AuthRequest, res: Response) => {
 
 export const createUser = async (req: AuthRequest, res: Response) => {
   try {
-    const { email, password, name, role } = req.body;
+    const { email, password, name, role, isAuditApproved } = req.body;
 
     const existingUser = await User.findOne({ email });
     if (existingUser) {
@@ -29,7 +29,8 @@ export const createUser = async (req: AuthRequest, res: Response) => {
     if (!['admin', 'staff', 'audits'].includes(normalizedRole)) {
       return res.status(400).json({ error: 'Invalid role' });
     }
-    if (normalizedRole === 'audits' && !isAuditRoleEligible({ _id: email, email })) {
+    const approved = Boolean(isAuditApproved) || normalizedRole === 'audits';
+    if (normalizedRole === 'audits' && !isAuditRoleEligible({ isAuditApproved: approved })) {
       return res.status(400).json({ error: 'This account is not eligible for audits role' });
     }
 
@@ -38,7 +39,8 @@ export const createUser = async (req: AuthRequest, res: Response) => {
       email,
       password: hashedPassword,
       name,
-      role: normalizedRole
+      role: normalizedRole,
+      isAuditApproved: approved
     });
 
     await user.save();
@@ -59,7 +61,7 @@ export const createUser = async (req: AuthRequest, res: Response) => {
 
 export const updateUser = async (req: AuthRequest, res: Response) => {
   try {
-    const { name, role, isActive } = req.body;
+    const { name, role, isActive, isAuditApproved } = req.body;
     const update: Record<string, unknown> = {};
     if (name !== undefined) {
       update.name = name;
@@ -67,16 +69,21 @@ export const updateUser = async (req: AuthRequest, res: Response) => {
     if (isActive !== undefined) {
       update.isActive = isActive;
     }
+    if (isAuditApproved !== undefined) {
+      update.isAuditApproved = Boolean(isAuditApproved);
+    }
     if (role !== undefined) {
       const normalizedRole = String(role).trim().toLowerCase();
       if (!['admin', 'staff', 'audits'].includes(normalizedRole)) {
         return res.status(400).json({ error: 'Invalid role' });
       }
-      const existing = await User.findById(req.params.id).select('_id email');
+      const existing = await User.findById(req.params.id).select('_id isAuditApproved');
       if (!existing) {
         return res.status(404).json({ error: 'User not found' });
       }
-      if (normalizedRole === 'audits' && !isAuditRoleEligible({ _id: existing._id, email: existing.email })) {
+      const approved =
+        isAuditApproved !== undefined ? Boolean(isAuditApproved) : Boolean(existing.isAuditApproved);
+      if (normalizedRole === 'audits' && !isAuditRoleEligible({ isAuditApproved: approved })) {
         return res.status(400).json({ error: 'This account is not eligible for audits role' });
       }
       update.role = normalizedRole;
