@@ -2,6 +2,7 @@ import { Response } from 'express';
 import { AuthRequest } from '../middleware/auth';
 import Item from '../models/Item';
 import Transaction from '../models/Transaction';
+import RepairTicket from '../models/RepairTicket';
 import { notifyUsers } from '../utils/notificationService';
 import { notifyLowStock } from '../utils/inventoryAlerts';
 import { itemInventoryRef } from '../utils/itemRef';
@@ -162,7 +163,9 @@ export const requestDisposal = async (req: AuthRequest, res: Response) => {
       await notifyUsers({
       title: 'Disposal Approval Needed',
       message: `Disposal request for ${quantity} ${item.unit} of ${item.name} requires approval.`,
-      roles: ['admin'],
+      locationId: String(locationId),
+      eventType: 'disposal',
+      roles: ['admin', 'super_admin'],
       data: {
         itemId: item.id,
         transactionId: transaction.id
@@ -272,55 +275,60 @@ export const approveDisposal = async (req: AuthRequest, res: Response) => {
     //console.log('🏢 [DISPOSAL-APPROVE] Location:', locationName);
 
     if (approved) {
-      //console.log('✅ [DISPOSAL-APPROVE] Processing approval...');
-      if (!item) {
-        //console.log('❌ [DISPOSAL-APPROVE] Item not found for approval');
+      if (!item && !transaction.repairTicketId) {
         return res.status(404).json({ error: 'Item not found' });
       }
 
-      // Reduce stock
-      //console.log('📦 [DISPOSAL-APPROVE] Reducing stock...');
-      const locationIndex = item.locations.findIndex(
-        loc => loc.locationId?.toString() === transaction.fromLocationId?.toString()
-      );
-      //console.log('📍 [DISPOSAL-APPROVE] Location index:', locationIndex);
+      const fromRepair = Boolean(transaction.repairTicketId);
 
-      if (locationIndex >= 0) {
-        const oldQuantity = item.locations[locationIndex].quantity;
-        item.locations[locationIndex].quantity -= transaction.quantity;
-        const newQuantity = item.locations[locationIndex].quantity;
-        //console.log('📊 [DISPOSAL-APPROVE] Stock updated:', oldQuantity, '->', newQuantity);
-        await item.save();
-        //console.log('💾 [DISPOSAL-APPROVE] Item saved');
-      } else {
-        console.log('⚠️ [DISPOSAL-APPROVE] Location not found in item locations');
+      if (!fromRepair && item) {
+        const locationIndex = item.locations.findIndex(
+          loc => loc.locationId?.toString() === transaction.fromLocationId?.toString()
+        );
+
+        if (locationIndex >= 0) {
+          item.locations[locationIndex].quantity -= transaction.quantity;
+          await item.save();
+        } else {
+          console.log('⚠️ [DISPOSAL-APPROVE] Location not found in item locations');
+        }
+      }
+
+      if (fromRepair && transaction.repairTicketId) {
+        await RepairTicket.findByIdAndUpdate(transaction.repairTicketId, {
+          status: 'lost',
+          returnedDate: new Date(),
+        });
       }
 
       transaction.status = 'approved';
       //console.log('✅ [DISPOSAL-APPROVE] Transaction status updated to approved');
 
       //console.log('🔔 [DISPOSAL-APPROVE] Checking for low stock alerts...');
-      try {
-        await notifyLowStock(item);
-        //console.log('✅ [DISPOSAL-APPROVE] Low stock check completed');
-      } catch (lowStockError) {
-        console.error('❌ [DISPOSAL-APPROVE] Low stock notification failed:', lowStockError);
+      if (item) {
+        try {
+          await notifyLowStock(item);
+        } catch (lowStockError) {
+          console.error('❌ [DISPOSAL-APPROVE] Low stock notification failed:', lowStockError);
+        }
       }
 
-      //console.log('📢 [DISPOSAL-APPROVE] Sending approval notification...');
+      const itemName = item?.name || String(transaction.itemId);
+      const itemUnit = item?.unit || 'units';
+
       try {
         await notifyUsers({
           title: 'Disposal Approved',
-          message: `Disposal of ${transaction.quantity} ${item.unit} for ${item.name} has been approved.`,
+          message: `Disposal of ${transaction.quantity} ${itemUnit} for ${itemName} has been approved.`,
           data: {
-            itemId: item.id,
+            itemId: item?.id ?? transaction.itemId,
             transactionId: transaction.id
           },
-          emailSubject: `StockBuddy Update – Disposal approved for ${item.name}`,
+          emailSubject: `StockBuddy Update – Disposal approved for ${itemName}`,
           emailHtml: `
-            <p>The disposal request for <strong>${item.name}</strong> has been approved.</p>
+            <p>The disposal request for <strong>${itemName}</strong> has been approved.</p>
             <ul>
-              <li>Quantity: ${transaction.quantity} ${item.unit}</li>
+              <li>Quantity: ${transaction.quantity} ${itemUnit}</li>
               <li>Location: ${locationName}</li>
               <li>Reason: ${transaction.reason}</li>
             </ul>
@@ -332,9 +340,11 @@ export const approveDisposal = async (req: AuthRequest, res: Response) => {
         console.error('❌ [DISPOSAL-APPROVE] Approval notification failed:', notifyError);
       }
     } else {
-     // console.log('❌ [DISPOSAL-APPROVE] Processing rejection...');
       transaction.status = 'rejected';
-     // console.log('✅ [DISPOSAL-APPROVE] Transaction status updated to rejected');
+
+      if (transaction.repairTicketId) {
+        await RepairTicket.findByIdAndUpdate(transaction.repairTicketId, { status: 'sent' });
+      }
 
       const itemLabel = item?.name || String(transaction.itemId);
       const unitLabel = item?.unit || 'units';
@@ -381,17 +391,23 @@ export const getPendingDisposals = async (req: AuthRequest, res: Response) => {
   //console.log('📋 [DISPOSAL-PENDING] Fetching pending disposals...');
   
   try {
-    const disposals = await Transaction.find({ 
-      type: 'DISPOSE', 
-      status: 'pending' 
+    const disposals = await Transaction.find({
+      type: 'DISPOSE',
+      status: 'pending'
     })
-      .populate('itemId', 'name sku')
-      .populate('fromLocationId', 'name')
-      .populate('createdBy', 'name')
-      .sort({ createdAt: -1 });
+      .populate('itemId', 'name sku barcode modelNumber serialNumber unit threshold purchaseDate')
+      .populate('fromLocationId', 'name address')
+      .populate('repairTicketId', 'vendorName serialNumber status sentDate')
+      .populate('createdBy', 'name email')
+      .sort({ createdAt: -1 })
+      .lean();
 
-   // console.log('✅ [DISPOSAL-PENDING] Found', disposals.length, 'pending disposals');
-    res.json(disposals);
+    const enriched = disposals.map((tx: any) => ({
+      ...tx,
+      itemRef: tx.itemId?.barcode || tx.itemId?.sku || tx.itemId?.modelNumber || '—',
+    }));
+
+    res.json(enriched);
   } catch (error) {
     console.error('💥 [DISPOSAL-PENDING] Failed to fetch pending disposals:', error);
     res.status(500).json({ error: 'Failed to fetch pending disposals' });

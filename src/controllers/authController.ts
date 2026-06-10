@@ -17,6 +17,9 @@ const normalizeRoleForCreate = (role: unknown, isAuditApproved: boolean) => {
     }
     return 'audits';
   }
+  if (normalized === 'super_admin') {
+    throw new Error('Invalid role');
+  }
   if (normalized === 'admin' || normalized === 'staff') {
     return normalized;
   }

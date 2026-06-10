@@ -7,8 +7,8 @@ export interface IRepairTicket extends Document {
   vendorName: string;
   serialNumber?: string;
   note?: string;
-  photo?: string; // Base64 encoded
-  status: 'sent' | 'returned' | 'lost';
+  photo?: string;
+  status: 'sent' | 'returned' | 'lost' | 'dispose_pending';
   sentDate: Date;
   returnedDate?: Date;
   createdBy: mongoose.Types.ObjectId;
@@ -23,8 +23,12 @@ const RepairTicketSchema = new Schema<IRepairTicket>({
   vendorName: { type: String, required: true },
   serialNumber: { type: String },
   note: { type: String },
-  photo: { type: String }, // Base64 encoded image
-  status: { type: String, enum: ['sent', 'returned', 'lost'], default: 'sent' },
+  photo: { type: String },
+  status: {
+    type: String,
+    enum: ['sent', 'returned', 'lost', 'dispose_pending'],
+    default: 'sent'
+  },
   sentDate: { type: Date, default: Date.now },
   returnedDate: { type: Date },
   createdBy: { type: Schema.Types.ObjectId, ref: 'User', required: true }

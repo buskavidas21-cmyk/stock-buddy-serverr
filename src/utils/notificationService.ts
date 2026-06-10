@@ -1,15 +1,20 @@
 import { GoogleAuth } from 'google-auth-library';
 import axios from 'axios';
 import User from '../models/User';
+import Manager from '../models/Manager';
 import { sendEmail } from './emailService';
 
-type UserRole = 'admin' | 'staff';
+type UserRole = 'super_admin' | 'admin' | 'staff' | 'audits';
+export type NotificationEventType = 'stock' | 'repair' | 'disposal' | 'transfer';
 
 interface NotificationOptions {
   title: string;
   message: string;
   data?: Record<string, unknown>;
   roles?: UserRole[];
+  locationId?: string;
+  eventType?: NotificationEventType;
+  notifyAdmins?: boolean;
   emailSubject?: string;
   emailHtml?: string;
   attachments?: Array<{
@@ -20,7 +25,6 @@ interface NotificationOptions {
   }>;
 }
 
-// Load service account credentials from environment variable only
 const getServiceAccount = () => {
   if (!process.env.FCM_SERVICE_ACCOUNT) {
     throw new Error(
@@ -31,15 +35,11 @@ const getServiceAccount = () => {
 
   try {
     const serviceAccount = JSON.parse(process.env.FCM_SERVICE_ACCOUNT);
-    
-    // Validate required fields
     const requiredFields = ['type', 'project_id', 'private_key', 'client_email'];
-    const missingFields = requiredFields.filter(field => !serviceAccount[field]);
-    
+    const missingFields = requiredFields.filter((field) => !serviceAccount[field]);
     if (missingFields.length > 0) {
       throw new Error(`FCM_SERVICE_ACCOUNT is missing required fields: ${missingFields.join(', ')}`);
     }
-    
     return serviceAccount;
   } catch (error: any) {
     if (error instanceof SyntaxError) {
@@ -53,113 +53,83 @@ const getServiceAccount = () => {
 
 const serviceAccount = getServiceAccount();
 
-// Get access token for Firebase Admin SDK
 async function getAccessToken(): Promise<string> {
-  try {
-    const auth = new GoogleAuth({
-      credentials: serviceAccount,
-      scopes: [
-        'https://www.googleapis.com/auth/userinfo.email',
-        'https://www.googleapis.com/auth/firebase.database',
-        'https://www.googleapis.com/auth/firebase.messaging',
-      ],
-    });
+  const auth = new GoogleAuth({
+    credentials: serviceAccount,
+    scopes: [
+      'https://www.googleapis.com/auth/userinfo.email',
+      'https://www.googleapis.com/auth/firebase.database',
+      'https://www.googleapis.com/auth/firebase.messaging',
+    ],
+  });
 
-    const client = await auth.getClient();
-    const tokenResponse = await client.getAccessToken();
-    
-    if (!tokenResponse.token) {
-      throw new Error('Failed to get access token');
-    }
-    
-    return tokenResponse.token;
-  } catch (error) {
-    console.error('Failed to get access token:', error);
-    throw error;
+  const client = await auth.getClient();
+  const tokenResponse = await client.getAccessToken();
+  if (!tokenResponse.token) {
+    throw new Error('Failed to get access token');
   }
+  return tokenResponse.token;
 }
 
-// Send FCM notification to a single device token
 const sendFCMNotification = async (
   token: string,
   title: string,
   body: string,
   data?: Record<string, unknown>
 ) => {
-  try {
-    const accessToken = await getAccessToken();
-    const url = `https://fcm.googleapis.com/v1/projects/${serviceAccount.project_id}/messages:send`;
+  const accessToken = await getAccessToken();
+  const url = `https://fcm.googleapis.com/v1/projects/${serviceAccount.project_id}/messages:send`;
 
-    // Convert data object to string format for FCM
-    const fcmData: Record<string, string> = {};
-    if (data) {
-      Object.keys(data).forEach(key => {
-        fcmData[key] = String(data[key]);
-      });
-    }
-
-    const payload = {
-      message: {
-        token: token,
-        notification: {
-          body: body,
-          title: title,
-        },
-        data: fcmData,
-      },
-    };
-
-    const response = await axios.post(url, payload, {
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${accessToken}`,
-      },
+  const fcmData: Record<string, string> = {};
+  if (data) {
+    Object.keys(data).forEach((key) => {
+      fcmData[key] = String(data[key]);
     });
-
-    return response.data;
-  } catch (error: any) {
-    console.error('Failed to send FCM notification:', error.response?.data || error.message);
-    throw error;
   }
+
+  const payload = {
+    message: {
+      token,
+      notification: { body, title },
+      data: fcmData,
+    },
+  };
+
+  const response = await axios.post(url, payload, {
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${accessToken}`,
+    },
+  });
+
+  return response.data;
 };
 
-// Send push notifications to multiple tokens
 const sendPushNotifications = async (
   tokens: string[],
   title: string,
   body: string,
   data?: Record<string, unknown>
 ) => {
-  if (tokens.length === 0) {
-    return;
-  }
+  if (!tokens.length) return;
 
-  // Send notifications to all tokens in parallel
-  const promises = tokens.map(token => 
-    sendFCMNotification(token, title, body, data).catch(error => {
-      console.error(`Failed to send notification to token ${token.substring(0, 20)}...:`, error.message);
-      return null; // Continue with other tokens even if one fails
-    })
+  await Promise.all(
+    tokens.map((token) =>
+      sendFCMNotification(token, title, body, data).catch((error) => {
+        console.error(`Failed to send notification to token ${token.substring(0, 20)}...:`, error.message);
+        return null;
+      })
+    )
   );
-
-  await Promise.all(promises);
 };
 
-// Send email notifications independently
 const sendEmailNotifications = async (
   emails: string[],
   subject: string,
   html: string,
-  attachments?: Array<{
-    filename: string;
-    content: string;
-    encoding: string;
-    cid?: string;
-  }>
+  attachments?: NotificationOptions['attachments']
 ) => {
-  if (!emails.length) {
-    return;
-  }
+  if (!emails.length) return;
 
   try {
     await sendEmail({
@@ -167,54 +137,76 @@ const sendEmailNotifications = async (
       bcc: emails,
       subject,
       html,
-      attachments
+      attachments,
     });
   } catch (error) {
     console.error('Failed to send email notifications:', error);
   }
 };
 
-// Main notification function - sends both push and email independently
+const getManagersForLocation = async (locationId: string, eventType?: NotificationEventType) => {
+  const managers = await Manager.find({
+    isActive: true,
+    assignedLocationIds: locationId,
+  }).select('email notificationPreferences');
+
+  if (!eventType) {
+    return managers;
+  }
+
+  const prefKey = eventType as keyof typeof managers[0]['notificationPreferences'];
+  return managers.filter((m) => m.notificationPreferences?.[prefKey] !== false);
+};
+
 export const notifyUsers = async ({
   title,
   message,
   data,
   roles,
+  locationId,
+  eventType,
+  notifyAdmins = true,
   emailSubject,
   emailHtml,
-  attachments
+  attachments,
 }: NotificationOptions) => {
-  // Build filter for users based on roles (same as email targeting)
-  const filter: Record<string, unknown> = { isActive: true };
+  const userFilter: Record<string, unknown> = { isActive: true };
+  const adminRoles: UserRole[] = ['admin', 'super_admin'];
+
   if (roles?.length) {
-    filter.role = { $in: roles };
+    userFilter.role = { $in: roles };
+  } else if (notifyAdmins) {
+    userFilter.role = { $in: adminRoles };
   }
 
-  // Get users matching the filter
-  const users = await User.find(filter).select('email noti role');
+  const users = locationId && eventType && !roles?.length && !notifyAdmins
+    ? []
+    : await User.find(userFilter).select('email noti role');
 
-  // Extract push tokens (FCM tokens from user.noti field)
+  const managerDocs = locationId
+    ? await getManagersForLocation(locationId, eventType)
+    : [];
+
   const pushTokens = users
-    .map(user => user.noti)
+    .map((user) => user.noti)
     .filter((token): token is string => Boolean(token));
 
-  // Extract emails
-  const emails = users
-    .map(user => user.email)
+  const userEmails = users.map((user) => user.email).filter((email): email is string => Boolean(email));
+  const managerEmails = managerDocs
+    .map((m) => m.email)
     .filter((email): email is string => Boolean(email));
 
-  // Send push notifications independently (always send if tokens exist)
+  const emails = [...new Set([...userEmails, ...managerEmails])];
+
   if (pushTokens.length > 0) {
-    await sendPushNotifications(pushTokens, title, message, data).catch(error => {
+    await sendPushNotifications(pushTokens, title, message, data).catch((error) => {
       console.error('Failed to send push notifications:', error);
     });
   }
 
-  // Send email notifications independently (only if emailSubject and emailHtml provided)
   if (emailSubject && emailHtml && emails.length > 0) {
-    await sendEmailNotifications(emails, emailSubject, emailHtml, attachments).catch(error => {
+    await sendEmailNotifications(emails, emailSubject, emailHtml, attachments).catch((error) => {
       console.error('Failed to send email notifications:', error);
     });
   }
 };
-

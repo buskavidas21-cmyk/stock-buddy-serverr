@@ -12,10 +12,14 @@ export interface IItem extends Document {
   unit: string;
   threshold: number;
   status: 'active' | 'inactive';
-  image?: string; // base64 encoded image
+  image?: string;
+  assignedManagerId?: mongoose.Types.ObjectId;
+  /** Locations this item was registered/created for */
+  registeredLocationIds: mongoose.Types.ObjectId[];
   locations: {
     locationId: mongoose.Types.ObjectId;
     quantity: number;
+    managerId?: mongoose.Types.ObjectId;
   }[];
   createdBy: mongoose.Types.ObjectId;
   createdAt: Date;
@@ -32,10 +36,13 @@ const ItemSchema = new Schema<IItem>({
   unit: { type: String, required: true },
   threshold: { type: Number, required: true, min: 0 },
   status: { type: String, enum: ['active', 'inactive'], default: 'active' },
-  image: { type: String }, // base64 encoded image
+  image: { type: String },
+  assignedManagerId: { type: Schema.Types.ObjectId, ref: 'Manager' },
+  registeredLocationIds: [{ type: Schema.Types.ObjectId, ref: 'Location' }],
   locations: [{
     locationId: { type: Schema.Types.ObjectId, ref: 'Location', required: true },
-    quantity: { type: Number, required: true, min: 0 }
+    quantity: { type: Number, required: true, min: 0 },
+    managerId: { type: Schema.Types.ObjectId, ref: 'Manager' }
   }],
   createdBy: { type: Schema.Types.ObjectId, ref: 'User', required: true }
 }, {
@@ -45,5 +52,6 @@ const ItemSchema = new Schema<IItem>({
 ItemSchema.index({ status: 1 });
 ItemSchema.index({ modelNumber: 1 });
 ItemSchema.index({ serialNumber: 1 });
+ItemSchema.index({ registeredLocationIds: 1 });
 
 export default mongoose.model<IItem>('Item', ItemSchema);

@@ -1,7 +1,10 @@
 import { Response } from 'express';
 import crypto from 'crypto';
+import mongoose from 'mongoose';
 import { AuthRequest } from '../middleware/auth';
 import Item from '../models/Item';
+import Manager from '../models/Manager';
+import Location from '../models/Location';
 
 export const createItem = async (req: AuthRequest, res: Response) => {
   try {
@@ -35,6 +38,11 @@ export const createItem = async (req: AuthRequest, res: Response) => {
       typeof body.barcode === 'string' && body.barcode.trim() ? body.barcode.trim() : undefined;
     const image = body.image;
 
+    const locationId = body.locationId ?? body.location_id;
+    const managerId = body.managerId ?? body.manager_id;
+    const initialQuantity = body.initialQuantity ?? body.initial_quantity ?? 0;
+    const qty = Number(initialQuantity);
+
     if (!name) {
       return res.status(400).json({ error: 'name is required' });
     }
@@ -44,12 +52,43 @@ export const createItem = async (req: AuthRequest, res: Response) => {
     if (Number.isNaN(threshold) || threshold < 0) {
       return res.status(400).json({ error: 'threshold must be a non-negative number' });
     }
+    if (Number.isNaN(qty) || qty < 0) {
+      return res.status(400).json({ error: 'initialQuantity must be a non-negative number' });
+    }
+
+    if (locationId) {
+      const location = await Location.findById(locationId);
+      if (!location || !location.isActive) {
+        return res.status(400).json({ error: 'Invalid locationId' });
+      }
+    }
+
+    if (managerId) {
+      const manager = await Manager.findOne({ _id: managerId, isActive: true });
+      if (!manager) {
+        return res.status(400).json({ error: 'Invalid managerId' });
+      }
+    }
+
+    const locations: Array<{ locationId: mongoose.Types.ObjectId; quantity: number; managerId?: mongoose.Types.ObjectId }> = [];
+    const registeredLocationIds: mongoose.Types.ObjectId[] = [];
+
+    if (locationId) {
+      const locOid = new mongoose.Types.ObjectId(locationId);
+      registeredLocationIds.push(locOid);
+      locations.push({
+        locationId: locOid,
+        quantity: qty,
+        ...(managerId ? { managerId: new mongoose.Types.ObjectId(managerId) } : {}),
+      });
+    }
 
     const payload: Record<string, unknown> = {
       name,
       unit,
       threshold,
-      locations: [],
+      locations,
+      registeredLocationIds,
       createdBy: req.user?._id
     };
 
@@ -59,10 +98,17 @@ export const createItem = async (req: AuthRequest, res: Response) => {
     if (purchaseDate) payload.purchaseDate = purchaseDate;
     if (barcode) payload.barcode = barcode;
     if (image !== undefined) payload.image = image;
+    if (managerId) payload.assignedManagerId = new mongoose.Types.ObjectId(managerId);
 
     const item = new Item(payload as any);
 
     await item.save();
+    await item.populate([
+      { path: 'assignedManagerId', select: 'name email' },
+      { path: 'registeredLocationIds', select: 'name' },
+      { path: 'locations.locationId', select: 'name' },
+      { path: 'locations.managerId', select: 'name email' },
+    ]);
     res.status(201).json({ message: 'Item created successfully', item });
   } catch (error: any) {
     if (error.code === 11000) {
@@ -74,9 +120,18 @@ export const createItem = async (req: AuthRequest, res: Response) => {
 
 export const getItems = async (req: AuthRequest, res: Response) => {
   try {
-    const items = await Item.find({ status: 'active' })
+    const locationId = req.query.locationId as string | undefined;
+    const filter: Record<string, unknown> = { status: 'active' };
+    if (locationId) {
+      filter.registeredLocationIds = locationId;
+    }
+
+    const items = await Item.find(filter)
       .select('-image')
       .populate('locations.locationId', 'name')
+      .populate('locations.managerId', 'name email')
+      .populate('assignedManagerId', 'name email')
+      .populate('registeredLocationIds', 'name')
       .populate('createdBy', 'name')
       .lean();
     
@@ -95,10 +150,47 @@ export const getItems = async (req: AuthRequest, res: Response) => {
   }
 };
 
+export const getItemsByLocation = async (req: AuthRequest, res: Response) => {
+  try {
+    const { locationId } = req.params;
+
+    const items = await Item.find({
+      status: 'active',
+      registeredLocationIds: locationId,
+    })
+      .select('-image')
+      .populate('locations.locationId', 'name')
+      .populate('locations.managerId', 'name email')
+      .populate('assignedManagerId', 'name email')
+      .populate('registeredLocationIds', 'name')
+      .lean();
+
+    const itemsWithStock = items.map((item) => {
+      const locationStock = item.locations.find(
+        (loc) => String(loc.locationId?._id ?? loc.locationId) === locationId
+      );
+      const totalStock = item.locations.reduce((sum, loc) => sum + loc.quantity, 0);
+      return {
+        ...item,
+        quantityAtLocation: locationStock?.quantity ?? 0,
+        totalStock,
+        stockStatus: totalStock <= item.threshold ? 'low' : 'sufficient',
+      };
+    });
+
+    res.json(itemsWithStock);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch items by location' });
+  }
+};
+
 export const getItemById = async (req: AuthRequest, res: Response) => {
   try {
     const item = await Item.findById(req.params.id)
       .populate('locations.locationId', 'name')
+      .populate('locations.managerId', 'name email')
+      .populate('assignedManagerId', 'name email')
+      .populate('registeredLocationIds', 'name')
       .populate('createdBy', 'name');
     
     if (!item) {

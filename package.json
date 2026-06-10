@@ -8,7 +8,8 @@
     "build": "tsc",
     "start": "node dist/server.js",
     "convert-fcm": "node scripts/convert-fcm-to-env.js",
-    "migrate:inventory-v2": "node scripts/migrate-optional-item-fields.js"
+    "migrate:inventory-v2": "node scripts/migrate-optional-item-fields.js",
+    "migrate:client-v3": "node scripts/migrate-client-v3.js"
   },
   "keywords": [
     "inventory",

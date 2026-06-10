@@ -50,7 +50,7 @@ const adjustStockForTransfer = (
 
 export const addStock = async (req: AuthRequest, res: Response) => {
   try {
-    const { itemId, locationId, quantity, note, photo } = parseBody(req.body) || {};
+    const { itemId, locationId, quantity, note, photo, managerId } = parseBody(req.body) || {};
 
     console.log('Add stock request:', { itemId, locationId, quantity, note });
 
@@ -61,6 +61,13 @@ export const addStock = async (req: AuthRequest, res: Response) => {
     const item = await Item.findById(itemId);
     if (!item) {
       return res.status(404).json({ error: 'Item not found' });
+    }
+
+    const isRegisteredAtLocation = item.registeredLocationIds?.some(
+      (id) => id.toString() === String(locationId)
+    );
+    if (item.registeredLocationIds?.length && !isRegisteredAtLocation) {
+      return res.status(400).json({ error: 'Item is not registered for this location' });
     }
 
     // Get location name for email
@@ -78,8 +85,20 @@ export const addStock = async (req: AuthRequest, res: Response) => {
 
     if (locationIndex >= 0) {
       item.locations[locationIndex].quantity += quantity;
+      if (managerId) {
+        item.locations[locationIndex].managerId = new mongoose.Types.ObjectId(managerId);
+      }
     } else {
-      item.locations.push({ locationId: new mongoose.Types.ObjectId(locationId), quantity });
+      item.locations.push({
+        locationId: new mongoose.Types.ObjectId(locationId),
+        quantity,
+        ...(managerId ? { managerId: new mongoose.Types.ObjectId(managerId) } : {}),
+      });
+    }
+
+    if (!isRegisteredAtLocation) {
+      item.registeredLocationIds = item.registeredLocationIds || [];
+      item.registeredLocationIds.push(new mongoose.Types.ObjectId(locationId));
     }
 
     await item.save();
@@ -89,6 +108,7 @@ export const addStock = async (req: AuthRequest, res: Response) => {
       type: 'ADD',
       itemId,
       toLocationId: locationId,
+      managerId: managerId || undefined,
       quantity,
       note,
       photo,
@@ -118,6 +138,8 @@ export const addStock = async (req: AuthRequest, res: Response) => {
     await notifyUsers({
       title: 'Stock Added',
       message: `${item.name} stock increased by ${quantity} ${item.unit}.`,
+      locationId: String(locationId),
+      eventType: 'stock',
       data: {
         itemId: item.id,
         transactionId: transaction.id,
@@ -177,7 +199,7 @@ export const addStock = async (req: AuthRequest, res: Response) => {
 
 export const transferStock = async (req: AuthRequest, res: Response) => {
   try {
-    const { itemId, fromLocationId, toLocationId, quantity, note } = parseBody(req.body) || {};
+    const { itemId, fromLocationId, toLocationId, quantity, note, managerId } = parseBody(req.body) || {};
 
     const item = await Item.findById(itemId);
     if (!item) {
@@ -201,7 +223,7 @@ export const transferStock = async (req: AuthRequest, res: Response) => {
       return res.status(400).json({ error: 'Insufficient stock at source location' });
     }
 
-    const isAdmin = req.user?.role === 'admin';
+    const isAdmin = req.user?.role === 'admin' || req.user?.role === 'super_admin';
 
     if (isAdmin) {
       try {
@@ -217,6 +239,7 @@ export const transferStock = async (req: AuthRequest, res: Response) => {
         itemId,
         fromLocationId,
         toLocationId,
+        managerId: managerId || undefined,
         quantity,
         note,
         status: 'approved',
@@ -230,6 +253,8 @@ export const transferStock = async (req: AuthRequest, res: Response) => {
       await notifyUsers({
         title: 'Stock Transfer Completed',
         message: `${item.name} moved from ${fromLocationName} to ${toLocationName}.`,
+        locationId: String(fromLocationId),
+        eventType: 'transfer',
         data: {
           itemId: item.id,
           transactionId: transaction.id,
@@ -258,6 +283,7 @@ export const transferStock = async (req: AuthRequest, res: Response) => {
       itemId,
       fromLocationId,
       toLocationId,
+      managerId: managerId || undefined,
       quantity,
       note,
       status: 'pending',
@@ -269,11 +295,13 @@ export const transferStock = async (req: AuthRequest, res: Response) => {
     await notifyUsers({
       title: 'Stock Transfer Approval Needed',
       message: `Transfer request for ${quantity} ${item.unit} of ${item.name} requires approval.`,
+      locationId: String(fromLocationId),
+      eventType: 'transfer',
       data: {
         itemId: item.id,
         transactionId: transaction.id
       },
-      roles: ['admin'],
+      roles: ['admin', 'super_admin'],
       emailSubject: `StockBuddy Action Required – Transfer approval for ${item.name}`,
       emailHtml: `
         <p>A stock transfer requires your approval.</p>

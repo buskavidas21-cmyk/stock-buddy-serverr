@@ -19,7 +19,7 @@ export const notifyLowStock = async (item: any) => {
         modelNumber: item.modelNumber,
         totalStock
       },
-      roles: ['admin'],
+      roles: ['admin', 'super_admin'],
       emailSubject: `StockBuddy Alert – ${item.name} is Low`,
       emailHtml: `
         <p><strong>${item.name}</strong> (${ref}) is low on stock.</p>

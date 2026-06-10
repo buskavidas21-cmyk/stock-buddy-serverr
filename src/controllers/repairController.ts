@@ -117,6 +117,8 @@ export const sendForRepair = async (req: AuthRequest, res: Response) => {
     await notifyUsers({
       title: 'Item Sent for Repair',
       message: `${quantity} ${item.unit} of ${item.name} were sent to ${vendorName}.`,
+      locationId: String(locationId),
+      eventType: 'repair',
       data: {
         itemId: item.id,
         repairTicketId: repairTicket.id
@@ -240,6 +242,8 @@ export const returnFromRepair = async (req: AuthRequest, res: Response) => {
     await notifyUsers({
       title: 'Repair Completed',
       message: `${repairTicket.quantity} ${item.unit} of ${item.name} returned from repair.`,
+      locationId: String(locationId),
+      eventType: 'repair',
       data: {
         itemId: item.id,
         repairTicketId: repairTicket.id
@@ -261,15 +265,119 @@ export const returnFromRepair = async (req: AuthRequest, res: Response) => {
   }
 };
 
+export const disposeFromRepair = async (req: AuthRequest, res: Response) => {
+  try {
+    const { repairTicketId, reason, note, photo, checklist } = req.body;
+
+    if (!repairTicketId || !reason) {
+      return res.status(400).json({ error: 'repairTicketId and reason are required' });
+    }
+
+    const repairTicket = await RepairTicket.findById(repairTicketId);
+    if (!repairTicket || repairTicket.status !== 'sent') {
+      return res.status(404).json({ error: 'Repair ticket not found or already processed' });
+    }
+
+    const item = await Item.findById(repairTicket.itemId);
+    if (!item) {
+      return res.status(404).json({ error: 'Item not found' });
+    }
+
+    let normalizedPhoto = photo || '';
+    if (photo && !photo.startsWith('data:image/')) {
+      normalizedPhoto = `data:image/jpeg;base64,${photo}`;
+    }
+
+    const repairReturnChecklist = normalizeRepairReturnChecklist(checklist);
+
+    const transaction = new Transaction({
+      type: 'DISPOSE',
+      itemId: repairTicket.itemId,
+      fromLocationId: repairTicket.locationId,
+      repairTicketId: repairTicket._id,
+      quantity: repairTicket.quantity,
+      reason,
+      note,
+      photo: normalizedPhoto || undefined,
+      repairReturnChecklist: repairReturnChecklist.length ? repairReturnChecklist : undefined,
+      status: 'pending',
+      createdBy: req.user?._id,
+    });
+
+    await transaction.save();
+
+    repairTicket.status = 'dispose_pending';
+    await repairTicket.save();
+
+    const Location = require('../models/Location').default;
+    const location = await Location.findById(repairTicket.locationId);
+    const locationName = location?.name || 'Unknown Location';
+
+    await notifyUsers({
+      title: 'Repair Disposal Approval Needed',
+      message: `Unrepairable item ${item.name} requires disposal approval.`,
+      locationId: String(repairTicket.locationId),
+      eventType: 'disposal',
+      roles: ['admin', 'super_admin'],
+      data: {
+        itemId: item.id,
+        repairTicketId: repairTicket.id,
+        transactionId: transaction.id,
+      },
+      emailSubject: `StockBuddy Action Required – Dispose unrepairable ${item.name}`,
+      emailHtml: `
+        <p>An item returned from repair could not be fixed and requires disposal approval.</p>
+        <ul>
+          <li>Item: ${item.name}</li>
+          <li>Barcode: ${item.barcode || 'N/A'}</li>
+          <li>Location: ${locationName}</li>
+          <li>Vendor: ${repairTicket.vendorName}</li>
+          <li>Reason: ${reason}</li>
+        </ul>
+      `,
+    });
+
+    res.status(201).json({
+      message: 'Disposal request submitted for unrepairable item',
+      repairTicket,
+      transaction,
+    });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to submit repair disposal request' });
+  }
+};
+
 export const getRepairTickets = async (req: AuthRequest, res: Response) => {
   try {
-    const tickets = await RepairTicket.find()
-      .populate('itemId', 'name sku')
+    const status = req.query.status as string | undefined;
+    const filter: Record<string, unknown> = {};
+    if (status) {
+      filter.status = status;
+    }
+
+    const tickets = await RepairTicket.find(filter)
+      .populate('itemId', 'name sku barcode modelNumber serialNumber unit')
       .populate('locationId', 'name')
       .populate('createdBy', 'name')
-      .sort({ createdAt: -1 });
+      .sort({ createdAt: -1 })
+      .lean();
 
-    res.json(tickets);
+    const enriched = tickets.map((ticket: any) => {
+      const item = ticket.itemId;
+      const displayLabel = item?.barcode
+        ? `Barcode: ${item.barcode} - ${item.name}`
+        : item?.serialNumber
+          ? `SN: ${item.serialNumber} - ${item.name}`
+          : item?.name || 'Unknown item';
+
+      return {
+        ...ticket,
+        displayLabel,
+        itemBarcode: item?.barcode,
+      };
+    });
+
+    res.json(enriched);
   } catch (error) {
     res.status(500).json({ error: 'Failed to fetch repair tickets' });
   }

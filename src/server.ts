@@ -14,6 +14,7 @@ import repairRoutes from './routes/repairs';
 import disposalRoutes from './routes/disposals';
 import locationRoutes from './routes/locations';
 import userRoutes from './routes/users';
+import managerRoutes from './routes/managers';
 import transactionRoutes from './routes/transactions';
 
 const app = express();
@@ -74,6 +75,7 @@ app.use('/api/repairs', repairRoutes);
 app.use('/api/disposals', disposalRoutes);
 app.use('/api/locations', locationRoutes);
 app.use('/api/users', userRoutes);
+app.use('/api/managers', managerRoutes);
 app.use('/api/transactions', transactionRoutes);
 
 app.get('/', (req, res) => {
