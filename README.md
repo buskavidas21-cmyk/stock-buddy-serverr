@@ -4,35 +4,90 @@ Complete inventory management system backend built with Node.js, Express.js, Mon
 
 ## Features
 
-- **Authentication & Authorization**: JWT-based auth with role-based access (Admin/Staff/Audits)
-- **Email Integration**: Password reset via Gmail SMTP
-- **Item Management**: CRUD operations for inventory items with barcode, model/serial, and purchase date support
-- **Stock Management**: Add stock, transfer between locations with approval workflow
-- **Repair Management**: Send items for repair and track returns with vendor details and return checklist
-- **Disposal Management**: Request disposals with photo proof and admin approval
+- **Authentication & Authorization**: JWT-based auth with roles (`super_admin`, `admin`, `staff`, `audits`)
+- **Manager Management**: Create managers, assign locations, control per-event email preferences
+- **Email Integration**: Password reset via Gmail SMTP; location-scoped manager notifications
+- **Item Management**: CRUD with barcode, model/serial, purchase date, location + manager at creation
+- **Stock Management**: Add stock with manager assignment; location-filtered item lists
+- **Repair Management**: Send/return repairs, optional serial, barcode-first labels, dispose-from-repair flow
+- **Disposal Management**: Request disposals with enriched review data (barcode-first)
 - **Location Management**: Manage multiple warehouse locations
-- **Transaction Logging**: Complete audit trail with filtering, search, pagination, and print-friendly export
-- **Dashboard**: Real-time inventory overview with low stock alerts
-- **User Management**: Admin can manage staff users
+- **Transaction Logging**: Filtering, search, pagination, print export, repair checklists
+- **Dashboard**: Overview + dedicated low-stock endpoint with rich item/location/manager data
+- **User Management**: Admin/super-admin user control with soft deactivate/reactivate
 
 ## API Documentation
 
-## What's New (Inventory V2)
+## Changelog
 
-- `items` now support optional `modelNumber`, `serialNumber`, and `purchaseDate`.
-- `sku` is now optional for new item creation (legacy SKU values remain supported).
-- `REPAIR_IN` transactions now support `repairReturnChecklist` (array of checklist items).
-- Transactions API supports advanced filtering:
-  - category (`all`, `sent_repair`, `returned_repair`, `transfers`, `disposed`, `add`)
-  - date presets (`day`, `week`, `month`, `year`) via `datePreset` + optional `anchorDate`
-  - `search` across item and transaction text fields
-- New printable transactions view:
-  - `GET /transactions/export/print` (respects current filters)
-- New role: `audits`:
-  - read-only intent for transactions
-  - blocked from inventory/dashboard/location/users/stock/repair/disposal modules
-  - role assignment is admin-managed via User Management using `isAuditApproved`
+### Inventory V2
 
+| Area | Change |
+|------|--------|
+| Items | Optional `modelNumber`, `serialNumber`, `purchaseDate`; `sku` optional for new items |
+| Repairs | `repairReturnChecklist` on `REPAIR_IN` transactions |
+| Transactions | Category/date/search filters, pagination, print export |
+| Role `audits` | Read-only transactions; admin assigns via `isAuditApproved` |
+
+### Client V3 (Latest)
+
+| Area | Change |
+|------|--------|
+| **Managers** | New `/managers` module — CRUD, location assignment, email preferences |
+| **Create Item** | Accepts `locationId`, `managerId`, `initialQuantity` at creation |
+| **List Items** | Filter by location: `GET /items?locationId=` or `GET /items/by-location/:id` |
+| **Add Stock** | Accepts `managerId`; items must be registered for selected location |
+| **Repairs** | Barcode-first `displayLabel`; `POST /repairs/dispose-from-repair` for unrepairable items |
+| **Disposals** | Pending list includes barcode, model, serial, linked repair ticket |
+| **Dashboard** | New `GET /dashboard/low-stock` with location/manager breakdown |
+| **Users** | Inactive users included by default; super admin controls activate/deactivate |
+| **Role `super_admin`** | Protected account; only super admin can deactivate/reactivate users |
+| **Notifications** | Managers receive emails only for their assigned locations (preference-based) |
+
+
+### Super Admin Bootstrap (one-time)
+
+Set your account in MongoDB (no public API for first super admin):
+
+```js
+db.users.updateOne(
+  { email: "your@email.com" },
+  { $set: { role: "super_admin", isActive: true } }
+)
+```
+
+---
+
+## Roles & Permissions
+
+| Role | Access |
+|------|--------|
+| `super_admin` | Full access; only role that can activate/deactivate users; cannot be deactivated |
+| `admin` | Full inventory access; cannot deactivate users or modify super admin |
+| `staff` | Standard inventory operations |
+| `audits` | Read-only `GET /transactions` (+ auth profile); blocked elsewhere |
+
+---
+
+## API Quick Reference (Updated Endpoints)
+
+| Method | Endpoint | New/Updated Params | Notes |
+|--------|----------|-------------------|-------|
+| `POST` | `/items` | `locationId`, `managerId`, `initialQuantity` | Registers item to location + manager |
+| `GET` | `/items` | `?locationId=` | Filter items registered for location |
+| `GET` | `/items/by-location/:locationId` | — | Items for Add Stock location picker |
+| `POST` | `/stock/add` | `managerId` | Stored on transaction + item location row |
+| `POST` | `/stock/transfer` | `managerId` | Optional on transfer transaction |
+| `GET` | `/repairs` | `?status=` | Returns `displayLabel`, `itemBarcode` (barcode-first) |
+| `POST` | `/repairs/dispose-from-repair` | `repairTicketId`, `reason`, `note`, `photo`, `checklist` | Unrepairable item → pending disposal |
+| `GET` | `/dashboard/low-stock` | `?locationId=` | Rich low-stock list for mobile screen |
+| `GET` | `/users` | `?includeInactive=false` | Inactive users included by default |
+| `PUT` | `/users/:id` | `isActive` | **Super admin only** for activate/deactivate |
+| `POST` | `/managers` | `name`, `email`, `phone`, `assignedLocationIds`, `notificationPreferences` | Admin only |
+| `PUT` | `/managers/:id/locations` | `locationIds[]` | Assign sites to manager |
+| `GET` | `/disposals/pending` | — | Response includes `barcode`, `itemRef`, repair link |
+
+---
 
 ### Base URL
 ```
@@ -198,39 +253,52 @@ Authorization: Bearer YOUR_JWT_TOKEN
 
 ---
 
-## 📊 Dashboard Endpoint
+## 📊 Dashboard Endpoints
 
-### Get Dashboard Data
+### 1. Get Dashboard Data
 **GET** `/dashboard`
 **Headers:** `Authorization: Bearer TOKEN`
+
+**Response (200):** Summary + enriched `lowStockItems` (barcode, model, location breakdown, managers) + `recentTransactions`.
+
+### 2. Get Low Stock Items (Updated — use for Low Stock screen)
+**GET** `/dashboard/low-stock`
+**Headers:** `Authorization: Bearer TOKEN`
+
+**Query Parameters:**
+| Param | Type | Description |
+|-------|------|-------------|
+| `locationId` | string | optional — filter to items registered at this location |
 
 **Response (200):**
 ```json
 {
-  "summary": {
-    "totalItems": 150,
-    "totalStock": 2500,
-    "lowStockCount": 5,
-    "pendingRepairs": 3,
-    "pendingDisposals": 2
-  },
-  "lowStockItems": [
+  "count": 2,
+  "items": [
     {
       "id": "item_id",
-      "name": "Laptop Dell",
-      "sku": "DELL-001",
-      "currentStock": 2,
-      "threshold": 5
-    }
-  ],
-  "recentTransactions": [
-    {
-      "_id": "transaction_id",
-      "type": "ADD",
-      "quantity": 10,
-      "createdAt": "2024-01-01T00:00:00.000Z",
-      "itemId": { "name": "Laptop Dell", "sku": "DELL-001" },
-      "createdBy": { "name": "John Doe" }
+      "name": "CleanMax",
+      "barcode": "A1B2C3D4",
+      "modelNumber": "ZM-800",
+      "sku": "SKU-4440944867",
+      "serialNumber": "SN-001",
+      "unit": "PCS",
+      "threshold": 5,
+      "currentStock": 0,
+      "stockStatus": "out_of_stock",
+      "locationId": "location_id",
+      "locationName": "Shedd",
+      "assignedManager": { "name": "Site Manager", "email": "manager@company.com" },
+      "manager": { "name": "Site Manager", "email": "manager@company.com" },
+      "locations": [
+        {
+          "locationId": "location_id",
+          "locationName": "Shedd",
+          "quantity": 0,
+          "manager": { "name": "Site Manager" },
+          "status": "low"
+        }
+      ]
     }
   ]
 }
@@ -240,49 +308,51 @@ Authorization: Bearer YOUR_JWT_TOKEN
 
 ## 📦 Item Management
 
-### 1. Create Item (Admin Only)
+### 1. Create Item (Admin Only) — **Updated**
 **POST** `/items`
 **Headers:** `Authorization: Bearer TOKEN`
 
 **Request Body:**
+| Field | Type | Required | Notes |
+|-------|------|----------|-------|
+| `name` | string | yes | Item name |
+| `unit` | string | yes | e.g. `PCS`, `pieces` |
+| `threshold` | number | yes | Low-stock threshold |
+| `model_number` / `modelNumber` | string | no | Model number |
+| `serial_number` / `serialNumber` | string | no | Serial number |
+| `purchase_date` / `purchaseDate` | date | no | Purchase date |
+| `barcode` | string | no | Barcode |
+| `sku` | string | no | Legacy SKU (optional) |
+| `image` | string | no | Base64 image |
+| `locationId` / `location_id` | ObjectId | no | **NEW** — register item to location |
+| `managerId` / `manager_id` | ObjectId | no | **NEW** — assign manager |
+| `initialQuantity` / `initial_quantity` | number | no | **NEW** — starting qty at location (default `0`) |
+
 ```json
 {
-  "name": "Laptop Dell",
-  "model_number": "LAT-15-G6", // optional
-  "serial_number": "SN-ABC-123", // optional
-  "purchase_date": "2026-04-24", // optional
-  "barcode": "123456789", // optional
-  "unit": "pieces",
+  "name": "Tablet - Apple",
+  "model_number": "IPAD-11",
+  "serial_number": "SN-ABC-123",
+  "purchase_date": "2026-04-24",
+  "barcode": "A1B2C3D4",
+  "unit": "PCS",
   "threshold": 5,
-  "image": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAA..." // optional - base64 encoded image
+  "locationId": "location_id",
+  "managerId": "manager_id",
+  "initialQuantity": 1
 }
 ```
 
-**Response (201):**
-```json
-{
-  "message": "Item created successfully",
-  "item": {
-    "_id": "item_id",
-    "name": "Laptop Dell",
-    "sku": "DELL-001",
-    "modelNumber": "LAT-15-G6",
-    "serialNumber": "SN-ABC-123",
-    "purchaseDate": "2026-04-24T00:00:00.000Z",
-    "barcode": "123456789",
-    "unit": "pieces",
-    "threshold": 5,
-    "image": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAA...",
-    "status": "active",
-    "locations": [],
-    "createdBy": "user_id"
-  }
-}
-```
+**Response (201):** Item with `registeredLocationIds`, `assignedManagerId`, and `locations[]` populated.
 
-### 2. Get All Items
+### 2. Get All Items — **Updated**
 **GET** `/items`
 **Headers:** `Authorization: Bearer TOKEN`
+
+**Query Parameters:**
+| Param | Type | Description |
+|-------|------|-------------|
+| `locationId` | string | optional — return only items registered for this location |
 
 **Response (200):**
 ```json
@@ -305,19 +375,44 @@ Authorization: Bearer YOUR_JWT_TOKEN
 ]
 ```
 
-### 3. Search Items
+### 3. Get Items by Location — **NEW**
+**GET** `/items/by-location/:locationId`
+**Headers:** `Authorization: Bearer TOKEN`
+
+Use this for **Add Stock** item picker after a location is selected.
+
+**Response (200):**
+```json
+[
+  {
+    "_id": "item_id",
+    "name": "Tablet - Apple",
+    "barcode": "A1B2C3D4",
+    "modelNumber": "IPAD-11",
+    "quantityAtLocation": 3,
+    "totalStock": 3,
+    "stockStatus": "sufficient",
+    "assignedManagerId": { "name": "Site Manager", "email": "manager@company.com" },
+    "locations": []
+  }
+]
+```
+
+### 4. Search Items
 **GET** `/items/search?query=laptop`
 **Headers:** `Authorization: Bearer TOKEN`
 
+**Query Parameters:** `query` (required) — searches name, sku, modelNumber, serialNumber, barcode
+
 **Response (200):** Same as Get All Items but filtered
 
-### 4. Lookup Item by Barcode
+### 5. Lookup Item by Barcode
 **GET** `/items/barcode/:barcode`
 **Headers:** `Authorization: Bearer TOKEN`
 
 **Response (200):** Same as Get Item by ID
 
-### 5. Assign or Generate Barcode (Admin Only)
+### 6. Assign or Generate Barcode (Admin Only)
 **POST** `/items/:id/barcode`
 **Headers:** `Authorization: Bearer TOKEN`
 
@@ -331,13 +426,13 @@ Authorization: Bearer YOUR_JWT_TOKEN
 
 If `barcode` is omitted, the server generates a unique uppercase code. Set `overwrite` to `true` to replace an existing barcode.
 
-### 6. Get Item by ID
+### 7. Get Item by ID
 **GET** `/items/:id`
 **Headers:** `Authorization: Bearer TOKEN`
 
 **Response (200):** Single item object
 
-### 7. Update Item (Admin Only)
+### 8. Update Item (Admin Only)
 **PUT** `/items/:id`
 **Headers:** `Authorization: Bearer TOKEN`
 
@@ -355,47 +450,53 @@ If `barcode` is omitted, the server generates a unique uppercase code. Set `over
 
 ## 📋 Stock Management
 
-### 1. Add Stock
+### 1. Add Stock — **Updated**
 **POST** `/stock/add`
 **Headers:** `Authorization: Bearer TOKEN`
 
 **Request Body:**
+| Field | Type | Required | Notes |
+|-------|------|----------|-------|
+| `itemId` | ObjectId | yes | Must be registered for `locationId` |
+| `locationId` | ObjectId | yes | Target location |
+| `quantity` | number | yes | Quantity to add |
+| `managerId` | ObjectId | no | **NEW** — manager for this stock entry |
+| `note` | string | no | Note |
+| `photo` | string | no | Base64 image |
+
 ```json
 {
   "itemId": "item_id",
   "locationId": "location_id",
+  "managerId": "manager_id",
   "quantity": 20,
   "note": "Initial stock",
-  "photo": "base64_encoded_image" // optional
+  "photo": "base64_encoded_image"
 }
 ```
 
-**Response (201):**
-```json
-{
-  "message": "Stock added successfully",
-  "transaction": {
-    "_id": "transaction_id",
-    "type": "ADD",
-    "itemId": "item_id",
-    "toLocationId": "location_id",
-    "quantity": 20,
-    "note": "Initial stock",
-    "status": "approved"
-  }
-}
-```
+**Response (201):** Transaction includes `managerId`. Managers at location receive email (if preferences allow).
 
-### 2. Transfer Stock
+### 2. Transfer Stock — **Updated**
 **POST** `/stock/transfer`
 **Headers:** `Authorization: Bearer TOKEN`
 
 **Request Body:**
+| Field | Type | Required | Notes |
+|-------|------|----------|-------|
+| `itemId` | ObjectId | yes | Item to transfer |
+| `fromLocationId` | ObjectId | yes | Source |
+| `toLocationId` | ObjectId | yes | Destination |
+| `quantity` | number | yes | Qty |
+| `managerId` | ObjectId | no | **NEW** — optional manager on transaction |
+| `note` | string | no | Note |
+
 ```json
 {
   "itemId": "item_id",
   "fromLocationId": "source_location_id",
   "toLocationId": "destination_location_id",
+  "managerId": "manager_id",
   "quantity": 5,
   "note": "Transfer to branch"
 }
@@ -471,20 +572,30 @@ Set `approved` to `false` to reject a pending transfer.
 
 ## 🔧 Repair Management
 
-### 1. Send for Repair
+### 1. Send for Repair — **Updated** (`serialNumber` optional)
 **POST** `/repairs/send`
 **Headers:** `Authorization: Bearer TOKEN`
 
 **Request Body:**
+| Field | Type | Required | Notes |
+|-------|------|----------|-------|
+| `itemId` | ObjectId | yes | Item |
+| `locationId` | ObjectId | yes | Source location |
+| `quantity` | number | yes | Qty |
+| `vendorName` | string | yes | Repair vendor |
+| `serialNumber` | string | **no** | Optional — some items have no serial |
+| `note` | string | no | Notes |
+| `photo` | string | no | Base64 image |
+
 ```json
 {
   "itemId": "item_id",
   "locationId": "location_id",
   "quantity": 2,
   "vendorName": "Tech Repair Co",
-  "serialNumber": "SN123456", // optional
+  "serialNumber": "SN123456",
   "note": "Screen damage",
-  "photo": "base64_encoded_image" // optional
+  "photo": "base64_encoded_image"
 }
 ```
 
@@ -531,23 +642,65 @@ Set `approved` to `false` to reject a pending transfer.
 }
 ```
 
-### 3. Get Repair Tickets
+### 3. Dispose from Repair (Unrepairable) — **NEW**
+**POST** `/repairs/dispose-from-repair`
+**Headers:** `Authorization: Bearer TOKEN`
+
+Use when an item **cannot be repaired** — creates a pending disposal (no stock returned).
+
+**Request Body:**
+| Field | Type | Required | Notes |
+|-------|------|----------|-------|
+| `repairTicketId` | ObjectId | yes | Open repair ticket (`status: sent`) |
+| `reason` | string | yes | `Broken`, `Expired`, or `Obsolete` |
+| `note` | string | no | Notes |
+| `photo` | string | no | Evidence photo |
+| `checklist` | array | no | Same format as return checklist |
+
+```json
+{
+  "repairTicketId": "repair_ticket_id",
+  "reason": "Broken",
+  "note": "Board damaged beyond repair",
+  "photo": "base64_encoded_image",
+  "checklist": [{ "label": "Tested power", "completed": true }]
+}
+```
+
+**Response (201):** `{ repairTicket, transaction }` — ticket status becomes `dispose_pending`.
+
+### 4. Get Repair Tickets — **Updated** (barcode-first labels)
 **GET** `/repairs`
 **Headers:** `Authorization: Bearer TOKEN`
+
+**Query Parameters:**
+| Param | Type | Description |
+|-------|------|-------------|
+| `status` | string | optional — `sent`, `returned`, `lost`, `dispose_pending` |
 
 **Response (200):**
 ```json
 [
   {
     "_id": "repair_ticket_id",
-    "itemId": { "name": "Laptop Dell", "sku": "DELL-001" },
-    "quantity": 2,
+    "displayLabel": "Barcode: A1B2C3D4 - Tablet - Apple",
+    "itemBarcode": "A1B2C3D4",
+    "itemId": {
+      "name": "Tablet - Apple",
+      "barcode": "A1B2C3D4",
+      "modelNumber": "IPAD-11",
+      "serialNumber": "SN-001",
+      "sku": "SKU-0689300974"
+    },
+    "quantity": 1,
     "vendorName": "Tech Repair Co",
     "status": "sent",
     "sentDate": "2024-01-01T00:00:00.000Z"
   }
 ]
 ```
+
+> Use `displayLabel` or `itemBarcode` in dropdowns instead of serial number.
 
 ---
 
@@ -606,21 +759,37 @@ Set `approved` to `false` to reject a pending transfer.
 }
 ```
 
-### 3. Get Pending Disposals (Admin Only)
+### 3. Get Pending Disposals (Admin Only) — **Updated**
 **GET** `/disposals/pending`
 **Headers:** `Authorization: Bearer TOKEN`
 
-**Response (200):**
+**Response (200):** Enriched item data — use `barcode` / `itemRef` instead of SKU in UI.
+
 ```json
 [
   {
     "_id": "transaction_id",
     "type": "DISPOSE",
-    "itemId": { "name": "Laptop Dell", "sku": "DELL-001" },
+    "itemRef": "A1B2C3D4",
+    "itemId": {
+      "name": "Tablet - Apple",
+      "barcode": "A1B2C3D4",
+      "modelNumber": "IPAD-11",
+      "serialNumber": "SN-001",
+      "sku": "SKU-0689300974",
+      "unit": "PCS",
+      "threshold": 5,
+      "purchaseDate": "2025-01-15T00:00:00.000Z"
+    },
+    "repairTicketId": {
+      "vendorName": "Tech Repair Co",
+      "status": "dispose_pending"
+    },
     "quantity": 1,
     "reason": "Broken",
     "status": "pending",
-    "createdBy": { "name": "Staff User" }
+    "fromLocationId": { "name": "Shedd" },
+    "createdBy": { "name": "Staff User", "email": "staff@company.com" }
   }
 ]
 ```
@@ -686,65 +855,111 @@ Set `approved` to `false` to reject a pending transfer.
 
 ---
 
-## 👥 User Management (Admin Only)
+## 👥 User Management (Admin / Super Admin)
 
-### 1. Get All Users
+**Roles allowed:** `admin`, `staff`, `audits` (admin creates). `super_admin` only via DB bootstrap or by existing super admin.
+
+### 1. Get All Users — **Updated**
 **GET** `/users`
 **Headers:** `Authorization: Bearer TOKEN`
 
-**Response (200):**
-```json
-[
-  {
-    "_id": "user_id",
-    "email": "staff@example.com",
-    "name": "Staff User",
-    "role": "staff",
-    "isActive": true,
-    "lastLogin": "2024-01-01T00:00:00.000Z"
-  }
-]
-```
+**Query Parameters:**
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `includeInactive` | boolean | `true` | Set `false` to hide deactivated users |
+
+**Response (200):** Includes `isActive` so admins can reactivate users.
 
 ### 2. Create User
 **POST** `/users`
-**Headers:** `Authorization: Bearer TOKEN`
+**Headers:** `Authorization: Bearer TOKEN` (Admin)
 
 **Request Body:**
-```json
-{
-  "email": "newuser@example.com",
-  "password": "password123",
-  "name": "New User",
-  "role": "audits",
-  "isAuditApproved": true
-}
-```
+| Field | Type | Required | Notes |
+|-------|------|----------|-------|
+| `email` | string | yes | Unique email |
+| `password` | string | yes | Password |
+| `name` | string | yes | Display name |
+| `role` | string | no | `admin`, `staff`, `audits` (default `staff`) |
+| `isAuditApproved` | boolean | no | Required `true` when `role` is `audits` |
 
-### 3. Update User
+### 3. Update User — **Updated**
 **PUT** `/users/:id`
-**Headers:** `Authorization: Bearer TOKEN`
+**Headers:** `Authorization: Bearer TOKEN` (Admin)
 
 **Request Body:**
-```json
-{
-  "name": "Updated Name",
-  "role": "audits",
-  "isAuditApproved": true,
-  "isActive": true
-}
-```
+| Field | Type | Who can set | Notes |
+|-------|------|-------------|-------|
+| `name` | string | Admin | Update name |
+| `role` | string | Admin | `admin`, `staff`, `audits` |
+| `isAuditApproved` | boolean | Admin | For audits role |
+| `isActive` | boolean | **Super admin only** | `false` = deactivate, `true` = reactivate |
+
+> Super admin accounts cannot be deactivated. Only super admin can change super admin accounts.
 
 ### 4. Reset User Password
 **POST** `/users/:id/reset-password`
-**Headers:** `Authorization: Bearer TOKEN`
+**Headers:** `Authorization: Bearer TOKEN` (Admin; super admin for super admin accounts)
+
+---
+
+## 👔 Manager Management (Admin Only) — **NEW**
+
+Managers are site contacts assigned to locations. They receive **location-scoped email notifications** based on preferences.
+
+### 1. Create Manager
+**POST** `/managers`
 
 **Request Body:**
 ```json
 {
-  "newPassword": "newPassword123"
+  "name": "Jorge Rodriguez",
+  "email": "jorge@company.com",
+  "phone": "+1234567890",
+  "assignedLocationIds": ["location_id_1", "location_id_2"],
+  "notificationPreferences": {
+    "stock": true,
+    "repair": true,
+    "disposal": true,
+    "transfer": false
+  }
 }
 ```
+
+### 2. Get All Managers
+**GET** `/managers`
+
+**Query Parameters:**
+| Param | Type | Description |
+|-------|------|-------------|
+| `includeInactive` | boolean | `true` to include deactivated managers |
+
+### 3. Get Manager by ID
+**GET** `/managers/:id`
+
+### 4. Get Managers by Location
+**GET** `/managers/by-location/:locationId`
+
+Returns managers assigned to a specific site.
+
+### 5. Update Manager
+**PUT** `/managers/:id`
+
+**Request Body:** `name`, `email`, `phone`, `isActive`, `notificationPreferences` (partial update supported)
+
+**Notification preference keys:** `stock`, `repair`, `disposal`, `transfer` (boolean each)
+
+### 6. Assign Locations to Manager
+**PUT** `/managers/:id/locations`
+
+**Request Body:**
+```json
+{
+  "locationIds": ["location_id_1", "location_id_2"]
+}
+```
+
+Replaces the manager's full location assignment list.
 
 ---
 
@@ -843,6 +1058,18 @@ All endpoints may return these error responses:
 }
 ```
 
+```json
+{
+  "error": "Super admin access required"
+}
+```
+
+```json
+{
+  "error": "Only super admin can activate or deactivate users"
+}
+```
+
 **404 Not Found:**
 ```json
 {
@@ -886,7 +1113,13 @@ FRONTEND_URL=http://localhost:3000
 2. Generate App Password for Mail
 3. Use the 16-character app password in `EMAIL_APP_PASSWORD`
 
-### 4. Start Server
+### 4. Run Migrations (after deploy)
+```bash
+npm run migrate:inventory-v2
+npm run migrate:client-v3
+```
+
+### 5. Start Server
 ```bash
 # Development
 npm run dev
@@ -896,7 +1129,7 @@ npm run build
 npm start
 ```
 
-### 5. Test Server
+### 6. Test Server
 ```bash
 curl http://localhost:5000/
 ```
@@ -908,38 +1141,49 @@ curl http://localhost:5000/
 ```
 src/
 ├── config/
-│   └── database.ts          # MongoDB connection
+│   ├── database.ts
+│   └── auditAccess.ts
 ├── controllers/
-│   ├── authController.ts    # Authentication logic
+│   ├── authController.ts
 │   ├── dashboardController.ts
 │   ├── itemController.ts
 │   ├── stockController.ts
 │   ├── repairController.ts
 │   ├── disposalController.ts
 │   ├── locationController.ts
+│   ├── managerController.ts   # NEW
 │   ├── userController.ts
 │   └── transactionController.ts
 ├── middleware/
-│   └── auth.ts              # JWT authentication
+│   ├── auth.ts
+│   └── auditRole.ts
 ├── models/
-│   ├── User.ts              # User schema
-│   ├── Item.ts              # Item schema
-│   ├── Location.ts          # Location schema
-│   ├── Transaction.ts       # Transaction schema
-│   └── RepairTicket.ts      # Repair ticket schema
+│   ├── User.ts
+│   ├── Manager.ts             # NEW
+│   ├── Item.ts
+│   ├── Location.ts
+│   ├── Transaction.ts
+│   └── RepairTicket.ts
 ├── routes/
-│   ├── auth.ts              # Auth routes
+│   ├── auth.ts
 │   ├── dashboard.ts
 │   ├── items.ts
 │   ├── stock.ts
 │   ├── repairs.ts
 │   ├── disposals.ts
 │   ├── locations.ts
+│   ├── managers.ts            # NEW
 │   ├── users.ts
 │   └── transactions.ts
 ├── utils/
-│   └── emailService.ts      # Email functionality
-└── server.ts                # Main server file
+│   ├── emailService.ts
+│   ├── notificationService.ts
+│   ├── inventoryAlerts.ts
+│   └── itemRef.ts
+└── server.ts
+scripts/
+├── migrate-optional-item-fields.js
+└── migrate-client-v3.js
 ```
 
 ---
@@ -952,7 +1196,7 @@ src/
    - Register/Login to get JWT token
    - Add token to Authorization header for protected routes
 4. **Test Order**:
-   - Authentication → Locations → Items → Stock → Repairs → Disposals
+   - Authentication → Locations → Managers → Items → Stock → Repairs → Disposals → Transactions
 
 ---
 
