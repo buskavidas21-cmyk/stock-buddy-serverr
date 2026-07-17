@@ -82,15 +82,17 @@ export const updateManager = async (req: AuthRequest, res: Response) => {
     if (phone !== undefined) update.phone = phone?.trim() || undefined;
     if (isActive !== undefined) update.isActive = Boolean(isActive);
     if (notificationPreferences !== undefined) {
-      const existing = await Manager.findById(req.params.id).select('notificationPreferences');
-      if (!existing) {
-        return res.status(404).json({ error: 'Manager not found' });
-      }
-      update.notificationPreferences = {
-        ...defaultPreferences,
-        ...existing.notificationPreferences,
-        ...notificationPreferences,
-      };
+      // Use dot-notation so Mongoose $set updates each field individually.
+      // Spreading a Mongoose EmbeddedDocument does not produce a plain object,
+      // causing findByIdAndUpdate to silently drop the nested update.
+      if (notificationPreferences.stock !== undefined)
+        update['notificationPreferences.stock'] = Boolean(notificationPreferences.stock);
+      if (notificationPreferences.repair !== undefined)
+        update['notificationPreferences.repair'] = Boolean(notificationPreferences.repair);
+      if (notificationPreferences.disposal !== undefined)
+        update['notificationPreferences.disposal'] = Boolean(notificationPreferences.disposal);
+      if (notificationPreferences.transfer !== undefined)
+        update['notificationPreferences.transfer'] = Boolean(notificationPreferences.transfer);
     }
 
     const manager = await Manager.findByIdAndUpdate(req.params.id, update, { new: true })
