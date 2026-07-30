@@ -5,6 +5,7 @@ import { AuthRequest } from '../middleware/auth';
 import Item from '../models/Item';
 import Manager from '../models/Manager';
 import Location from '../models/Location';
+import Transaction from '../models/Transaction';
 
 export const createItem = async (req: AuthRequest, res: Response) => {
   try {
@@ -103,6 +104,20 @@ export const createItem = async (req: AuthRequest, res: Response) => {
     const item = new Item(payload as any);
 
     await item.save();
+
+    // Record initial stock as a transaction when a location and quantity are provided
+    if (locationId && qty > 0) {
+      await new Transaction({
+        type: 'ADD',
+        itemId: item._id,
+        toLocationId: new mongoose.Types.ObjectId(locationId),
+        ...(managerId ? { managerId: new mongoose.Types.ObjectId(managerId) } : {}),
+        quantity: qty,
+        note: 'Initial stock on item creation',
+        createdBy: req.user?._id,
+      }).save();
+    }
+
     await item.populate([
       { path: 'assignedManagerId', select: 'name email' },
       { path: 'registeredLocationIds', select: 'name' },
