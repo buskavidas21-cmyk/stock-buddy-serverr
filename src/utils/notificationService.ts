@@ -191,7 +191,27 @@ export const notifyUsers = async ({
     .map((user) => user.noti)
     .filter((token): token is string => Boolean(token));
 
-  const userEmails = users.map((user) => user.email).filter((email): email is string => Boolean(email));
+  let userEmails = users.map((user) => user.email).filter((email): email is string => Boolean(email));
+
+  // Cross-reference userEmails against Manager notificationPreferences.
+  // A person who is both a User (admin/staff) and a Manager should not receive
+  // emails for event types they have opted out of in their Manager profile.
+  if (eventType && userEmails.length > 0) {
+    const optedOutManagers = await Manager.find({
+      isActive: true,
+      email: { $in: userEmails },
+      [`notificationPreferences.${eventType}`]: false,
+    }).select('email');
+
+    const optedOutEmails = new Set(
+      optedOutManagers.map((m) => m.email).filter((e): e is string => Boolean(e))
+    );
+
+    if (optedOutEmails.size > 0) {
+      userEmails = userEmails.filter((email) => !optedOutEmails.has(email));
+    }
+  }
+
   const managerEmails = managerDocs
     .map((m) => m.email)
     .filter((email): email is string => Boolean(email));
