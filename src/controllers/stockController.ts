@@ -366,6 +366,7 @@ export const getStockByLocation = async (req: AuthRequest, res: Response) => {
           id: item.id,
           name: item.name,
           sku: item.sku,
+          barcode: item.barcode,
           modelNumber: item.modelNumber,
           serialNumber: item.serialNumber,
           unit: item.unit,
