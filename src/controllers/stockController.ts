@@ -34,6 +34,19 @@ const adjustStockForTransfer = (
 
   item.locations[fromLocationIndex].quantity -= quantity;
 
+  // If source location quantity is now zero, remove it entirely from locations
+  // and unregister it so the item no longer appears at the source location.
+  // Uses splice (not filter+reassign) so Mongoose DocumentArray dirty-tracking works.
+  if (item.locations[fromLocationIndex].quantity === 0) {
+    item.locations.splice(fromLocationIndex, 1);
+    const regIdx = (item.registeredLocationIds || []).findIndex(
+      (id: any) => id.toString() === fromLocationId
+    );
+    if (regIdx !== -1) {
+      item.registeredLocationIds.splice(regIdx, 1);
+    }
+  }
+
   const toLocationIndex = item.locations.findIndex(
     (loc: any) => loc.locationId.toString() === toLocationId
   );
@@ -45,6 +58,16 @@ const adjustStockForTransfer = (
       locationId: new mongoose.Types.ObjectId(toLocationId),
       quantity
     });
+    // Register the destination location if it wasn't already registered
+    const alreadyRegistered = (item.registeredLocationIds || []).some(
+      (id: any) => id.toString() === toLocationId
+    );
+    if (!alreadyRegistered) {
+      if (!item.registeredLocationIds) {
+        item.registeredLocationIds = [];
+      }
+      item.registeredLocationIds.push(new mongoose.Types.ObjectId(toLocationId));
+    }
   }
 };
 
@@ -149,7 +172,7 @@ export const addStock = async (req: AuthRequest, res: Response) => {
       emailHtml: `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
           <h2 style="color: #2563eb; border-bottom: 2px solid #e5e7eb; padding-bottom: 10px;">📦 Stock Added</h2>
-          
+
           <div style="background-color: #f8fafc; padding: 20px; border-radius: 8px; margin: 20px 0;">
             <h3 style="margin-top: 0; color: #1f2937;">Item Details</h3>
             <ul style="list-style: none; padding: 0;">
@@ -325,9 +348,9 @@ export const getStockByLocation = async (req: AuthRequest, res: Response) => {
   try {
     const { locationId } = req.params;
 
-    const items = await Item.find({ 
+    const items = await Item.find({
       status: 'active',
-      'locations.locationId': locationId 
+      'locations.locationId': locationId
     }).populate('locations.locationId', 'name');
 
     const stockData = items.map(item => {
@@ -337,7 +360,7 @@ export const getStockByLocation = async (req: AuthRequest, res: Response) => {
           : String(loc.locationId);
         return locId === locationId;
       });
-      
+
       return {
         item: {
           id: item.id,
