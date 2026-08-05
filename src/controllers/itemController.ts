@@ -149,7 +149,7 @@ export const getItems = async (req: AuthRequest, res: Response) => {
       .populate('registeredLocationIds', 'name')
       .populate('createdBy', 'name')
       .lean();
-    
+
     const itemsWithStock = items.map(item => {
       const totalStock = item.locations.reduce((sum, loc) => sum + loc.quantity, 0);
       return {
@@ -207,7 +207,7 @@ export const getItemById = async (req: AuthRequest, res: Response) => {
       .populate('assignedManagerId', 'name email')
       .populate('registeredLocationIds', 'name')
       .populate('createdBy', 'name');
-    
+
     if (!item) {
       return res.status(404).json({ error: 'Item not found' });
     }
@@ -315,7 +315,7 @@ export const updateItem = async (req: AuthRequest, res: Response) => {
 export const searchItems = async (req: AuthRequest, res: Response) => {
   try {
     const { query } = req.query;
-    
+
     const items = await Item.find({
       status: 'active',
       $or: [
@@ -390,5 +390,21 @@ export const assignBarcode = async (req: AuthRequest, res: Response) => {
     res.json({ message: 'Barcode assigned successfully', item });
   } catch (error) {
     res.status(500).json({ error: 'Failed to assign barcode' });
+  }
+};
+
+export const deleteItem = async (req: AuthRequest, res: Response) => {
+  try {
+    const { id } = req.params;
+
+    const item = await Item.findByIdAndDelete(id);
+    if (!item) {
+      return res.status(404).json({ error: 'Item not found' });
+    }
+
+    // Transaction records are intentionally kept for audit trail.
+    res.json({ message: 'Item deleted successfully' });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to delete item' });
   }
 };
