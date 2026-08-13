@@ -459,15 +459,28 @@ export const exportTransactionsToPdf = async (req: AuthRequest, res: Response) =
 
     // ── PDF layout constants ──────────────────────────────────────────────────
     // Landscape A4: 841.89 × 595.28 pt
-    const MARGIN = 30;
-    const ROW_H  = 18;
-    const HDR_H  = 20;
-    const PAD    = 4;
+    const MARGIN       = 30;
+    const MIN_ROW_H    = 18;  // minimum row height (no checklist)
+    const HDR_H        = 20;
+    const PAD          = 4;
+    const ITEM_LINE_H  = 9;   // height per checklist item line
 
-    // Column widths (must sum to PAGE_W - 2*MARGIN ≈ 782)
-    const COLS    = [92, 68, 130, 35, 58, 105, 105, 97, 92] as const;
-    const HEADERS = ['Date', 'Type', 'Item', 'Qty', 'Status', 'From Location', 'To Location', 'Created By', 'Note'];
+    // 10 columns — widths sum to 782 (= 841.89 - 2*30)
+    const COLS    = [82, 62, 110, 30, 55, 88, 88, 78, 65, 124] as const;
+    const HEADERS = [
+      'Date', 'Type', 'Item', 'Qty', 'Status',
+      'From Location', 'To Location', 'Created By', 'Note', 'Repair Checklist'
+    ];
     const TABLE_W = COLS.reduce((a, b) => a + b, 0); // 782
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
+
+    /** Height needed to display this row (extra for checklist items). */
+    const rowHeight = (tx: any): number => {
+      const items: any[] = tx.repairReturnChecklist ?? [];
+      if (items.length === 0) return MIN_ROW_H;
+      return Math.max(MIN_ROW_H, items.length * ITEM_LINE_H + PAD * 2);
+    };
 
     // ── Build PDF ─────────────────────────────────────────────────────────────
     const pdfBuffer = await new Promise<Buffer>((resolve, reject) => {
@@ -479,7 +492,7 @@ export const exportTransactionsToPdf = async (req: AuthRequest, res: Response) =
 
       const PAGE_H = doc.page.height; // 595.28
 
-      // ── Helper: draw one table header row ────────────────────────────────
+      // ── Helper: table header row ──────────────────────────────────────────
       const drawHeader = (startY: number): number => {
         doc.fillColor('#1e3a5f').rect(MARGIN, startY, TABLE_W, HDR_H).fill();
         let cx = MARGIN;
@@ -494,12 +507,16 @@ export const exportTransactionsToPdf = async (req: AuthRequest, res: Response) =
         return startY + HDR_H;
       };
 
-      // ── Helper: draw one data row ─────────────────────────────────────────
+      // ── Helper: data row (variable height for checklist) ──────────────────
       const drawRow = (tx: any, startY: number, idx: number): number => {
-        const bg = idx % 2 === 0 ? '#f8f9fa' : '#ffffff';
-        doc.fillColor(bg).rect(MARGIN, startY, TABLE_W, ROW_H).fill();
+        const rh     = rowHeight(tx);
+        const bg     = idx % 2 === 0 ? '#f8f9fa' : '#ffffff';
+        const checklist: any[] = tx.repairReturnChecklist ?? [];
+
+        // Row background + border
+        doc.fillColor(bg).rect(MARGIN, startY, TABLE_W, rh).fill();
         doc.strokeColor('#dee2e6').lineWidth(0.3)
-          .rect(MARGIN, startY, TABLE_W, ROW_H).stroke();
+          .rect(MARGIN, startY, TABLE_W, rh).stroke();
 
         const dateStr = tx.createdAt
           ? new Date(tx.createdAt).toLocaleString('en-US', {
@@ -508,6 +525,7 @@ export const exportTransactionsToPdf = async (req: AuthRequest, res: Response) =
             })
           : '—';
 
+        // First 9 standard text cells
         const cells = [
           dateStr,
           typeLabel(tx.type ?? ''),
@@ -531,7 +549,39 @@ export const exportTransactionsToPdf = async (req: AuthRequest, res: Response) =
           cx += COLS[i];
         });
 
-        return startY + ROW_H;
+        // 10th cell: repair checklist (REPAIR_IN transactions only)
+        const checklistX = cx; // left edge of the checklist column
+        if (checklist.length > 0) {
+          let itemY = startY + PAD + 1;
+          checklist.forEach((item: any) => {
+            const done   = Boolean(item.completed);
+            const marker = done ? '[x]' : '[ ]';
+            // marker in accent colour, label in standard dark
+            doc.fillColor(done ? '#16a34a' : '#6b7280')
+              .font('Helvetica-Bold').fontSize(6.5)
+              .text(marker, checklistX + PAD, itemY, { lineBreak: false });
+
+            doc.fillColor(done ? '#16a34a' : '#374151')
+              .font('Helvetica').fontSize(6.5)
+              .text(
+                ' ' + sanitizePdf(item.label),
+                checklistX + PAD + 14,   // indent past the marker
+                itemY,
+                { width: COLS[9] - PAD * 2 - 14, lineBreak: false, ellipsis: true }
+              );
+            itemY += ITEM_LINE_H;
+          });
+        } else if (tx.type === 'REPAIR_IN') {
+          // REPAIR_IN but no checklist recorded
+          doc.fillColor('#9ca3af').font('Helvetica').fontSize(6.5)
+            .text('No checklist', checklistX + PAD, startY + PAD + 1, {
+              width: COLS[9] - PAD * 2,
+              lineBreak: false,
+            });
+        }
+        // For all other transaction types: leave the checklist cell blank.
+
+        return startY + rh;
       };
 
       // ── Page 1 header section ─────────────────────────────────────────────
@@ -574,8 +624,9 @@ export const exportTransactionsToPdf = async (req: AuthRequest, res: Response) =
       y = drawHeader(y);
 
       transactions.forEach((tx, idx) => {
-        // Page break
-        if (y + ROW_H > PAGE_H - MARGIN) {
+        const rh = rowHeight(tx);
+        // Page break — account for variable row height
+        if (y + rh > PAGE_H - MARGIN) {
           doc.addPage();
           y = MARGIN;
           y = drawHeader(y);
