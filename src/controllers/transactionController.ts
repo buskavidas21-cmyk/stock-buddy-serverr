@@ -436,6 +436,50 @@ export const getPrintableTransactions = async (req: AuthRequest, res: Response) 
   }
 };
 
+// ─── DELETE /transactions/orphaned ───────────────────────────────────────────
+// Deletes every transaction whose itemId references an item that no longer
+// exists in the items collection (i.e. the item was hard-deleted, leaving
+// the transaction with a dangling reference — shown as "Unknown Item" in app).
+// Admin-only. Returns { deleted: N, message }.
+
+export const deleteOrphanedTransactions = async (req: AuthRequest, res: Response) => {
+  try {
+    // Use $lookup to find transactions whose itemId matches no item document.
+    // Handles: deleted items (ObjectId gone), null itemId, any dangling ref.
+    const orphaned = await Transaction.aggregate([
+      {
+        $lookup: {
+          from: 'items',
+          localField: 'itemId',
+          foreignField: '_id',
+          as: 'itemDoc',
+        },
+      },
+      {
+        $match: { itemDoc: { $size: 0 } },
+      },
+      {
+        $project: { _id: 1 },
+      },
+    ]);
+
+    const count = orphaned.length;
+
+    if (count === 0) {
+      return res.json({ deleted: 0, message: 'No orphaned transactions found.' });
+    }
+
+    const ids = orphaned.map((t: any) => t._id);
+    await Transaction.deleteMany({ _id: { $in: ids } });
+
+    console.log(`[deleteOrphanedTransactions] deleted ${count} orphaned transaction(s)`);
+    res.json({ deleted: count, message: `Deleted ${count} orphaned transaction(s).` });
+  } catch (error) {
+    console.error('[deleteOrphanedTransactions]', error);
+    res.status(500).json({ error: 'Failed to delete orphaned transactions' });
+  }
+};
+
 // ─── GET /transactions/export/pdf ────────────────────────────────────────────
 
 export const exportTransactionsToPdf = async (req: AuthRequest, res: Response) => {
