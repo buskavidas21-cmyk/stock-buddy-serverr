@@ -3,15 +3,18 @@ import {
   getTransactions,
   getTransactionById,
   getPrintableTransactions,
+  exportTransactionsToPdf,
   patchRepairReturnChecklist
 } from '../controllers/transactionController';
 import { authenticateToken, requireStaffOrAdmin } from '../middleware/auth';
 
 const router = Router();
 
+// Static routes must be declared before /:id so they are not swallowed by the param route.
 router.get('/export/print', authenticateToken, getPrintableTransactions);
-router.get('/', authenticateToken, getTransactions);
+router.get('/export/pdf',   authenticateToken, exportTransactionsToPdf);
+router.get('/',             authenticateToken, getTransactions);
 router.patch('/:id/repair-checklist', authenticateToken, requireStaffOrAdmin, patchRepairReturnChecklist);
-router.get('/:id', authenticateToken, getTransactionById);
+router.get('/:id',          authenticateToken, getTransactionById);
 
 export default router;
