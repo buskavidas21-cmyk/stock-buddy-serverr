@@ -3,7 +3,7 @@ import { createLocation, getLocations, updateLocation } from '../controllers/loc
 import { authenticateToken, requireAdmin } from '../middleware/auth';
 import { rejectAuditsFromInventoryRoutes } from '../middleware/auditRole';
 
-const router = Router();
+const router = Router(); // location routes
 
 router.use(authenticateToken);
 router.post('/', requireAdmin, createLocation);
