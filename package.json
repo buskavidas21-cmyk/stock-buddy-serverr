@@ -24,6 +24,7 @@
     "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",
     "dotenv": "^16.3.1",
+    "exceljs": "^4.4.0",
     "express": "^4.18.2",
     "google-auth-library": "^10.5.0",
     "jsonwebtoken": "^9.0.2",
@@ -33,12 +34,12 @@
   },
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",
-    "@types/pdfkit": "^0.13.7",
     "@types/cors": "^2.8.17",
     "@types/express": "^4.17.21",
     "@types/jsonwebtoken": "^9.0.5",
     "@types/node": "^20.19.26",
     "@types/nodemailer": "^6.4.14",
+    "@types/pdfkit": "^0.13.7",
     "ts-node-dev": "^2.0.0",
     "typescript": "^5.3.0"
   }

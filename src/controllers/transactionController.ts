@@ -3,8 +3,9 @@ import { AuthRequest } from '../middleware/auth';
 import Transaction from '../models/Transaction';
 import Item from '../models/Item';
 import PDFDocument from 'pdfkit';
+import ExcelJS from 'exceljs';
 
-const ITEM_POPULATE_SELECT = 'name sku modelNumber serialNumber purchaseDate unit';
+const ITEM_POPULATE_SELECT = 'name sku barcode modelNumber serialNumber purchaseDate unit';
 
 const TRANSACTION_CATEGORY = {
   all: null as string | null,
@@ -693,5 +694,118 @@ export const exportTransactionsToPdf = async (req: AuthRequest, res: Response) =
   } catch (error) {
     console.error('[exportTransactionsToPdf]', error);
     res.status(500).json({ error: 'Failed to generate PDF' });
+  }
+};
+
+// ─── GET /transactions/export/excel ──────────────────────────────────────────
+
+export const exportTransactionsToExcel = async (req: AuthRequest, res: Response) => {
+  try {
+    let filter: Record<string, unknown>;
+    try {
+      filter = await buildTransactionQuery(req.query as Record<string, unknown>);
+    } catch (e: any) {
+      return res.status(400).json({ error: e.message || 'Invalid query parameters' });
+    }
+
+    const transactions = await Transaction.find(filter)
+      .populate('itemId', 'name sku barcode modelNumber serialNumber purchaseDate unit')
+      .populate('fromLocationId', 'name')
+      .populate('toLocationId', 'name')
+      .populate('createdBy', 'name email')
+      .populate('approvedBy', 'name')
+      .sort({ createdAt: -1 })
+      .limit(5000)
+      .lean();
+
+    const workbook = new ExcelJS.Workbook();
+    workbook.creator = 'Stock Buddy';
+    workbook.created = new Date();
+
+    const sheet = workbook.addWorksheet('Transactions', {
+      pageSetup: { paperSize: 9, orientation: 'landscape' },
+    });
+
+    sheet.columns = [
+      { header: 'Date',             key: 'date',         width: 22 },
+      { header: 'Type',             key: 'type',         width: 20 },
+      { header: 'Item Name',        key: 'itemName',     width: 28 },
+      { header: 'Barcode',          key: 'barcode',      width: 16 },
+      { header: 'SKU',              key: 'sku',          width: 14 },
+      { header: 'Model',            key: 'model',        width: 16 },
+      { header: 'Serial #',         key: 'serial',       width: 16 },
+      { header: 'Unit',             key: 'unit',         width: 10 },
+      { header: 'Qty',              key: 'qty',          width: 8  },
+      { header: 'Status',           key: 'status',       width: 12 },
+      { header: 'From Location',    key: 'fromLocation', width: 22 },
+      { header: 'To Location',      key: 'toLocation',   width: 22 },
+      { header: 'Created By',       key: 'createdBy',    width: 22 },
+      { header: 'Note',             key: 'note',         width: 28 },
+      { header: 'Repair Checklist', key: 'checklist',    width: 35 },
+    ];
+
+    // Style header row
+    const headerRow = sheet.getRow(1);
+    headerRow.height = 22;
+    headerRow.eachCell((cell) => {
+      cell.font      = { bold: true, color: { argb: 'FFFFFFFF' }, size: 11 };
+      cell.fill      = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E3A5F' } };
+      cell.alignment = { vertical: 'middle', horizontal: 'center', wrapText: false };
+      cell.border    = { bottom: { style: 'thin', color: { argb: 'FFADB5BD' } } };
+    });
+
+    // Add data rows
+    transactions.forEach((tx: any, idx: number) => {
+      const item      = tx.itemId as any;
+      const checklist = (tx.repairReturnChecklist ?? [])
+        .map((c: any) => `${c.completed ? '[x]' : '[ ]'} ${c.label}`)
+        .join('\n');
+
+      const dateStr = tx.createdAt
+        ? new Date(tx.createdAt).toLocaleString('en-US', {
+            year: 'numeric', month: 'short', day: 'numeric',
+            hour: '2-digit', minute: '2-digit', hour12: false,
+          })
+        : '';
+
+      const row = sheet.addRow({
+        date:         dateStr,
+        type:         typeLabel(tx.type ?? ''),
+        itemName:     item?.name        ?? '—',
+        barcode:      item?.barcode     ?? '',
+        sku:          item?.sku         ?? '',
+        model:        item?.modelNumber ?? '',
+        serial:       item?.serialNumber ?? '',
+        unit:         item?.unit        ?? '',
+        qty:          tx.quantity ?? 0,
+        status:       tx.status   ?? '',
+        fromLocation: (tx.fromLocationId as any)?.name ?? '—',
+        toLocation:   (tx.toLocationId   as any)?.name ?? '—',
+        createdBy:    (tx.createdBy      as any)?.name ?? '—',
+        note:         tx.note ?? '',
+        checklist,
+      });
+
+      const rowBg = idx % 2 === 0 ? 'FFF8F9FA' : 'FFFFFFFF';
+      row.eachCell({ includeEmpty: true }, (cell) => {
+        cell.fill      = { type: 'pattern', pattern: 'solid', fgColor: { argb: rowBg } };
+        cell.alignment = { vertical: 'top', wrapText: true };
+        cell.font      = { size: 10 };
+      });
+    });
+
+    // Freeze header + auto-filter
+    sheet.views      = [{ state: 'frozen', ySplit: 1 }];
+    sheet.autoFilter = { from: 'A1', to: { row: 1, column: sheet.columns.length } };
+
+    const buffer = Buffer.from(await workbook.xlsx.writeBuffer());
+
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', 'attachment; filename="transactions_report.xlsx"');
+    res.setHeader('Content-Length', buffer.length);
+    res.send(buffer);
+  } catch (error) {
+    console.error('[exportTransactionsToExcel]', error);
+    res.status(500).json({ error: 'Failed to generate Excel report' });
   }
 };
