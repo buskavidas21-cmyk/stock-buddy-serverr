@@ -17,14 +17,6 @@ import userRoutes from './routes/users';
 import managerRoutes from './routes/managers';
 import transactionRoutes from './routes/transactions';
 
-// Models (used by purge endpoint)
-import Item from './models/Item';
-import Transaction from './models/Transaction';
-import RepairTicket from './models/RepairTicket';
-
-// Auth middleware
-import { authenticateToken, requireAdmin } from './middleware/auth';
-
 const app = express();
 const PORT = Number(process.env.PORT) || 5000;
 const NODE_ENV = process.env.NODE_ENV || 'development';
@@ -71,28 +63,6 @@ app.use('/api/locations', locationRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/managers', managerRoutes);
 app.use('/api/transactions', transactionRoutes);
-
-// TEMPORARY: one-time data purge endpoint
-app.delete('/api/admin/purge-data', authenticateToken, requireAdmin, async (req, res) => {
-  try {
-    const [itemsRes, txRes, rtRes] = await Promise.all([
-      Item.deleteMany({}),
-      Transaction.deleteMany({}),
-      RepairTicket.deleteMany({}),
-    ]);
-    res.json({
-      message: 'Purge complete',
-      deleted: {
-        items: itemsRes.deletedCount,
-        transactions: txRes.deletedCount,
-        repairTickets: rtRes.deletedCount,
-      },
-    });
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
-  }
-});
-// END TEMPORARY
 
 app.get('/', (req, res) => {
   res.json({
